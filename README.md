@@ -58,12 +58,18 @@ Compression ratio improves with longer sequences as the fixed-cost unquantized b
 
 ### Quantization / Dequantization Throughput
 
-Fused Metal kernels for encoding (searchsorted + bit-pack) and value dequantization (unpack + affine transform). At batch 5K, d=64, 3-bit:
+Fused Metal kernels for encoding (searchsorted + bit-pack) and value dequantization (unpack + affine transform). Batch size 5,000 vectors.
 
-| Operation | MLX (Metal) | PyTorch CPU | MLX Speedup |
-|-----------|------------|-------------|-------------|
-| Quantize | 5.2M vec/s | 2.7M vec/s | **1.9x** |
-| Dequantize | 8.2M vec/s | 4.6M vec/s | **1.8x** |
+| Config | MLX Quantize | PyTorch Quantize | MLX Dequant | PyTorch Dequant |
+|--------|-------------|-----------------|------------|----------------|
+| d=64, 2-bit | 5.3M vec/s | 2.8M vec/s | 7.5M vec/s | 4.6M vec/s |
+| d=64, 3-bit | 5.2M vec/s | 2.7M vec/s | 8.2M vec/s | 4.6M vec/s |
+| d=64, 4-bit | 4.9M vec/s | 2.7M vec/s | 7.9M vec/s | 4.9M vec/s |
+| d=128, 2-bit | 3.1M vec/s | 2.0M vec/s | 4.6M vec/s | 3.3M vec/s |
+| d=128, 3-bit | 3.1M vec/s | 1.8M vec/s | 4.9M vec/s | 3.4M vec/s |
+| d=128, 4-bit | 2.9M vec/s | 1.7M vec/s | 4.8M vec/s | 3.1M vec/s |
+
+MLX Metal achieves **1.6-1.9x** quantization speedup and **1.4-1.8x** dequantization speedup over PyTorch CPU across all configurations.
 
 ### Metal Optimization Coverage
 
