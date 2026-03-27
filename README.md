@@ -29,16 +29,16 @@ The upstream implementation ([0xSero/turboquant](https://github.com/0xSero/turbo
 
 ### Attention Score Latency
 
-Metal kernels compute attention scores directly from packed quantized data, avoiding full dequantization. Tested with BH=8 heads, D=128, 3-bit keys.
+Metal kernels compute attention scores directly from packed quantized data, avoiding full dequantization. The default API (`attention_score()`) auto-selects Metal kernels on MLX, so you get fused GPU performance without explicit kernel calls. Tested with BH=8 heads, D=128, 3-bit keys.
 
-| Seq Length | Metal Kernel | MLX Python | PyTorch CPU | Metal Speedup |
-|-----------|-------------|-----------|------------|---------------|
-| 128 | 0.46 ms | 0.70 ms | 0.70 ms | 1.5x |
-| 256 | 0.33 ms | 0.59 ms | 0.85 ms | 2.6x |
-| 512 | 0.23 ms | 0.88 ms | 1.12 ms | 4.9x |
-| 1,024 | 0.49 ms | 1.34 ms | 1.47 ms | 3.0x |
-| 2,048 | 0.41 ms | 2.16 ms | 2.46 ms | 6.0x |
-| 4,096 | 0.56 ms | 4.04 ms | 4.53 ms | **8.2x** |
+| Seq Length | Metal Kernel | MLX Default | PyTorch CPU | Metal vs CPU |
+|-----------|-------------|------------|------------|--------------|
+| 128 | 0.45 ms | 0.44 ms | 0.88 ms | **2.0x** |
+| 256 | 0.24 ms | 0.48 ms | 0.84 ms | **3.6x** |
+| 512 | 0.23 ms | 0.24 ms | 1.09 ms | **4.9x** |
+| 1,024 | 0.28 ms | 0.44 ms | 1.58 ms | **5.6x** |
+| 2,048 | 0.27 ms | 0.47 ms | 2.59 ms | **9.6x** |
+| 4,096 | 0.57 ms | 0.41 ms | 4.60 ms | **11.1x** |
 
 Metal kernels scale sub-linearly while CPU scales linearly. The speedup grows with sequence length.
 
@@ -56,14 +56,25 @@ Simulated with 32 layers, 8 KV heads, D=128. Buffer of 128 recent unquantized to
 
 Compression ratio improves with longer sequences as the fixed-cost unquantized buffer is amortized.
 
-### Dequantization Throughput
+### Quantization / Dequantization Throughput
 
-MLX leverages Metal GPU for dequantization (codebook lookup + matrix multiply).
+Fused Metal kernels for encoding (searchsorted + bit-pack) and value dequantization (unpack + affine transform). At batch 5K, d=64, 3-bit:
 
-| Config | MLX (Metal) | PyTorch CPU | MLX Speedup |
-|--------|------------|-------------|-------------|
-| d=64, 3-bit, 5K vectors | 8.0M vec/s | 5.0M vec/s | 1.6x |
-| d=128, 3-bit, 5K vectors | 4.1M vec/s | 3.4M vec/s | 1.2x |
+| Operation | MLX (Metal) | PyTorch CPU | MLX Speedup |
+|-----------|------------|-------------|-------------|
+| Quantize | 5.2M vec/s | 2.7M vec/s | **1.9x** |
+| Dequantize | 8.2M vec/s | 4.6M vec/s | **1.8x** |
+
+### Metal Optimization Coverage
+
+All hot paths now run on Metal GPU with fused kernels:
+
+| Pipeline Stage | Metal Kernel | What it does |
+|---------------|-------------|-------------|
+| **Attention scoring** | `mse_score` + `qjl_score` | Fused score from packed data (no dequant) |
+| **Encoding** | `mse_encode` | Fused searchsorted + bit-pack |
+| **Value dequant** | `value_dequant` | Fused unpack + affine transform |
+| **Rotation** | MLX BLAS | `mx.matmul` (Metal-accelerated) |
 
 ## Installation
 
@@ -184,6 +195,8 @@ turboQuantPlayground/
       metal/
         mse_score.py                 # Metal kernel: MSE attention scoring
         qjl_score.py                 # Metal kernel: QJL correction scoring
+        mse_encode.py                # Metal kernel: fused quantize + bit-pack
+        value_dequant.py             # Metal kernel: fused value dequantization
 
   tests/                             # 63 tests across 5 modules
     test_codebook.py                 # Beta PDF, Lloyd-Max, codebook loading
@@ -236,12 +249,15 @@ The combined inner product estimator is unbiased:
 
 ### Metal Kernel Optimization
 
-Instead of dequantizing all keys (D-dimensional matmul per token), the Metal kernels:
-1. Rotate the query forward: `q_rot = q @ Pi^T` (once per decode step)
-2. Compute scores directly from packed indices: `score = sum_j q_rot[j] * centroid[idx[j]] * norm`
-3. Add QJL correction from packed sign bits
+Four custom Metal shaders cover the full encode/decode pipeline:
 
-This avoids materializing full-precision key vectors entirely.
+**Attention scoring** (`mse_score` + `qjl_score`): Instead of dequantizing all keys (D-dimensional matmul per token), the Metal kernels rotate the query forward once (`q_rot = q @ Pi^T`), then compute scores directly from packed indices: `score = sum_j q_rot[j] * centroid[idx[j]] * norm`, plus QJL correction from packed sign bits. No full-precision key vectors are ever materialized.
+
+**Fused encoding** (`mse_encode`): Combines searchsorted and bit-packing into a single GPU dispatch. Each Metal thread handles one packed byte — it scans the codebook boundaries, finds the quantization index, and packs multiple indices per byte in one pass.
+
+**Fused value dequantization** (`value_dequant`): Combines bit-unpacking, int-to-float conversion, and affine transform (`val * scale + zero`) into one kernel. Each thread reads one packed byte, extracts the quantized integer, looks up the group's scale/zero, and writes the float output directly.
+
+All Metal kernels are auto-selected when using the MLX backend — no explicit kernel calls needed.
 
 ## Backends
 
