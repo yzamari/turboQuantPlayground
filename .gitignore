@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+.pytest_cache/
+venv/
+.venv/
+*.so
+*.dylib
+upstream/
+notebooks/*.png
+.DS_Store

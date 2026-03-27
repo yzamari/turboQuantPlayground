@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "turboquant-mac"
+version = "0.1.0"
+description = "TurboQuant (ICLR 2026) ported to Apple Silicon — KV cache compression with MLX Metal kernels"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=1.24",
+    "scipy>=1.10",
+]
+
+[project.optional-dependencies]
+mlx = ["mlx>=0.22"]
+torch = ["torch>=2.1"]
+dev = ["pytest>=7.0", "jupyter", "matplotlib"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+turboquant_mac = ["codebooks/*.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
