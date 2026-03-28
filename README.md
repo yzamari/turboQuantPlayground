@@ -82,6 +82,32 @@ All hot paths now run on Metal GPU with fused kernels:
 | **Value dequant** | `value_dequant` | Fused unpack + affine transform |
 | **Rotation** | MLX BLAS | `mx.matmul` (Metal-accelerated) |
 
+## Real Model Benchmarks
+
+These benchmarks run TurboQuant as a drop-in KV cache replacement during actual LLM inference via [mlx-turboquant](https://github.com/yzamari/mlx-turboquant). All tests on M4 Pro 48GB with greedy decoding (temp=0).
+
+### Qwen2.5-32B-Instruct-4bit (32B parameters)
+
+| Benchmark | Standard (FP16 cache) | TurboQuant (3-bit) | Speed | Quality |
+|-----------|----------------------|-------------------|-------|---------|
+| Short (36 tok) | 6.7 tok/s | 6.8 tok/s | 101% | 100% match |
+| Medium (690 tok) | 7.0 tok/s | 7.2 tok/s | 103% | 100% match |
+| Long (1130 tok) | 6.9 tok/s | **9.6 tok/s** | **139%** | 100% match |
+| Long gen (500 tok) | 6.9 tok/s | 6.7 tok/s | 97% | 100% match |
+
+**39% faster on long context** with the 32B model. The bigger the model, the more memory-bandwidth-constrained inference becomes, so TurboQuant's compressed KV cache gives a bigger advantage.
+
+### Qwen2.5-3B-Instruct-4bit (3B parameters)
+
+| Benchmark | Standard (FP16 cache) | TurboQuant (3-bit) | Speed |
+|-----------|----------------------|-------------------|-------|
+| Short (36 tok) | 70.6 tok/s | 69.1 tok/s | 98% |
+| Medium (690 tok) | 61.6 tok/s | **69.4 tok/s** | **113%** |
+| Long (1130 tok) | 59.4 tok/s | **63.2 tok/s** | **106%** |
+| Long gen (500 tok) | 56.0 tok/s | 54.7 tok/s | 98% |
+
+Larger models are more memory-bandwidth-bound during decode, which is exactly where TurboQuant's compressed KV cache shines. The 32B model sees nearly 4x the speedup gain compared to the 3B model on long contexts.
+
 ## Installation
 
 Requires Python 3.11+.
