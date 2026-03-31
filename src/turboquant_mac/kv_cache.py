@@ -10,6 +10,7 @@ Backend-agnostic: uses the backend abstraction layer.
 """
 
 import math
+import numpy as np
 from typing import NamedTuple, Optional
 
 from turboquant_mac.quantizer import TurboQuantProd, ProdQuantized
@@ -155,16 +156,29 @@ class TurboQuantKVCache:
         buffer_size: int = 128,
         layer_idx: int = 0,
         backend: str = None,
+        bit_schedule: dict = None,
+        rotation_mode: str = "qr",
     ):
         self.head_dim = head_dim
-        self.key_bits = key_bits
-        self.value_bits = value_bits
         self.value_group_size = value_group_size
         self.buffer_size = buffer_size
         self._backend_name = backend
 
+        # Resolve per-layer bits from schedule
+        if bit_schedule is not None:
+            bits_entry = bit_schedule.get(layer_idx, bit_schedule.get("default", key_bits))
+            if isinstance(bits_entry, tuple):
+                self.key_bits, self.value_bits = bits_entry
+            else:
+                self.key_bits = bits_entry
+                self.value_bits = bits_entry
+        else:
+            self.key_bits = key_bits
+            self.value_bits = value_bits
+
         self.key_quantizer = TurboQuantProd(
-            dim=head_dim, bits=key_bits, seed=42 + layer_idx * 7, backend=backend,
+            dim=head_dim, bits=self.key_bits, seed=42 + layer_idx * 7,
+            backend=backend, rotation_mode=rotation_mode,
         )
 
         # State
@@ -284,17 +298,23 @@ class TurboQuantKVCache:
 
         return B.cat(scores_parts, dim=-1)
 
-    def attend(self, attn_weights):
+    def attend(self, attn_weights, top_k: int = None):
         """
         Compute attention output: out = softmax(scores) @ values.
 
         Args:
             attn_weights: (batch, n_heads, n_q, seq_len) — already softmaxed
+            top_k: If set, only use the top-K highest attention weights.
+                   Reduces value matmul from O(N*d) to O(K*d).
 
         Returns:
             output: (batch, n_heads, n_q, head_dim)
         """
         B = self.B
+
+        if top_k is not None and top_k < attn_weights.shape[-1]:
+            return self._attend_sparse(attn_weights, top_k)
+
         output_parts = []
         col_offset = 0
 
@@ -313,6 +333,54 @@ class TurboQuantKVCache:
             output_parts.append(B.matmul(w_buf, self.value_buffer))
 
         return sum(output_parts)
+
+    def _attend_sparse(self, attn_weights, top_k: int):
+        """Sparse attend: only use top-K attention weights for value computation."""
+        B = self.B
+
+        # Concatenate all values (dequantize compressed + buffer)
+        value_parts = []
+        if self.value_quantized is not None:
+            v_dequant = dequantize_values(
+                self.value_quantized, self.value_group_size, self._backend_name
+            )
+            value_parts.append(v_dequant)
+        if self.value_buffer is not None:
+            value_parts.append(self.value_buffer)
+
+        all_values = B.cat(value_parts, dim=-2)  # (batch, heads, seq_len, head_dim)
+
+        # Work in numpy for backend-agnostic top-K selection
+        w_np = B.to_numpy(attn_weights)        # (batch, heads, n_q, seq_len)
+        v_np = B.to_numpy(all_values)           # (batch, heads, seq_len, head_dim)
+
+        batch_shape = w_np.shape[:-1]           # (batch, heads, n_q)
+        n_q = w_np.shape[-2]
+        seq_len = w_np.shape[-1]
+        d = v_np.shape[-1]
+
+        # Flatten batch dims for easier indexing
+        w_flat = w_np.reshape(-1, seq_len)      # (B*H*n_q, seq_len)
+        # Values: (batch, heads, seq_len, d) -> need to tile for n_q
+        v_flat = v_np.reshape(-1, seq_len, d)   # (B*H, seq_len, d)
+        n_bh = v_flat.shape[0]
+
+        # Top-K indices per query
+        top_idx = np.argpartition(-w_flat, top_k, axis=-1)[..., :top_k]  # (B*H*n_q, K)
+        top_w = np.take_along_axis(w_flat, top_idx, axis=-1)             # (B*H*n_q, K)
+
+        # Renormalize
+        top_w = top_w / (np.sum(top_w, axis=-1, keepdims=True) + 1e-10)
+
+        # Gather values for each query: need to map (B*H*n_q) -> (B*H) for value index
+        result_flat = np.zeros((w_flat.shape[0], d), dtype=np.float32)
+        for i in range(w_flat.shape[0]):
+            bh_idx = i // n_q
+            vals = v_flat[bh_idx, top_idx[i], :]     # (K, d)
+            result_flat[i] = (top_w[i, :, None] * vals).sum(axis=0)
+
+        result = result_flat.reshape(*batch_shape, d)
+        return B.from_numpy(result.astype(np.float32))
 
     def memory_bytes(self) -> dict:
         """Estimate memory usage of the cache."""

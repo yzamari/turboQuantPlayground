@@ -89,11 +89,20 @@ def turboquant_mse_encode_metal(
     """
     Fused Metal kernel: searchsorted + bit-pack in one GPU dispatch.
 
-    Takes rotated float values and codebook boundaries, returns packed uint8 indices.
-    Eliminates intermediate arrays from separate searchsorted and pack steps.
+    Takes rotated float values and codebook boundaries, returns packed indices.
+    Uses uint32 for 3-bit (10 values per word), uint8 for other bit widths.
     """
-    eff_bits, vals_per_byte = _get_packing_params(bits)
-    packed_d = (d + vals_per_byte - 1) // vals_per_byte
+    is_3bit_u32 = (bits == 3)
+
+    if is_3bit_u32:
+        vals_per_word = 10
+        packed_d = (d + vals_per_word - 1) // vals_per_word
+        out_dtype = mx.uint32
+    else:
+        eff_bits, vals_per_byte = _get_packing_params(bits)
+        packed_d = (d + vals_per_byte - 1) // vals_per_byte
+        out_dtype = mx.uint8
+
     n_boundaries = boundaries.shape[0]
 
     # Flatten batch dims
@@ -117,7 +126,7 @@ def turboquant_mse_encode_metal(
     out = kernel(
         inputs=[flat, boundaries],
         output_shapes=[(n_batch, packed_d)],
-        output_dtypes=[mx.uint8],
+        output_dtypes=[out_dtype],
         grid=(packed_d, n_batch, 1),
         threadgroup=(min(packed_d, 256), 1, 1),
     )
@@ -128,7 +137,7 @@ def turboquant_mse_encode_metal(
 
 def turboquant_mse_score_metal(
     q_rot: mx.array,       # (BH, D) rotated query: q @ Pi^T
-    mse_packed: mx.array,  # (BH, N, packed_d) uint8 bit-packed indices
+    mse_packed: mx.array,  # (BH, N, packed_d) bit-packed indices (uint8 or uint32)
     norms: mx.array,       # (BH, N) original vector norms
     centroids: mx.array,   # (n_clusters,) codebook centroids
     mse_bits: int,
@@ -136,11 +145,13 @@ def turboquant_mse_score_metal(
     """
     Compute MSE attention scores using Metal kernel.
 
+    Uses uint32 packed data for 3-bit, uint8 for other bit widths.
     Returns: (BH, N) attention logits.
     """
     BH, D = q_rot.shape
     N = mse_packed.shape[1]
     packed_d = mse_packed.shape[2]
+    is_3bit_u32 = (mse_bits == 3)
 
     cache_key = (mse_bits, D, packed_d)
     if cache_key not in _mse_kernel_cache:
@@ -158,7 +169,7 @@ def turboquant_mse_score_metal(
     q_rot = q_rot.astype(mx.float32)
     norms = norms.astype(mx.float32)
     centroids = centroids.astype(mx.float32)
-    mse_packed = mse_packed.astype(mx.uint8)
+    mse_packed = mse_packed.astype(mx.uint32 if is_3bit_u32 else mx.uint8)
 
     out = kernel(
         inputs=[q_rot, mse_packed, norms, centroids],

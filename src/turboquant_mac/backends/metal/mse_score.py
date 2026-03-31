@@ -57,8 +57,49 @@ MSE_SCORE_SOURCE = """
 """
 
 
+MSE_SCORE_3BIT_U32_SOURCE = """
+    // Thread handles one (batch_head, token) pair
+    // 3-bit uint32 packing: 10 values per uint32 word (30 of 32 bits used)
+    uint bh = thread_position_in_grid.y;
+    uint n = thread_position_in_grid.x;
+
+    uint N = mse_shape[1];
+    uint BH = q_rot_shape[0];
+
+    if (n >= N || bh >= BH) return;
+
+    float score = 0.0f;
+
+    uint D = {D};
+    uint PACKED_D = {PACKED_D};
+    uint VALS_PER_WORD = 10;
+    uint BIT_MASK = 0x7;  // 3-bit mask
+
+    for (uint word_idx = 0; word_idx < PACKED_D; word_idx++) {{
+        uint packed = mse[bh * N * PACKED_D + n * PACKED_D + word_idx];
+
+        for (uint sub = 0; sub < VALS_PER_WORD; sub++) {{
+            uint coord = word_idx * VALS_PER_WORD + sub;
+            if (coord < D) {{
+                uint idx = (packed >> (sub * 3)) & BIT_MASK;
+                float centroid_val = centroids[idx];
+                float q_val = q_rot[bh * D + coord];
+                score += q_val * centroid_val;
+            }}
+        }}
+    }}
+
+    float norm_val = norms[bh * N + n];
+    out[bh * N + n] = score * norm_val;
+"""
+
+
 def get_mse_score_source(bits: int, d: int, packed_d: int) -> str:
     """Return Metal shader source with template parameters filled in."""
+    # Use specialized uint32 kernel for 3-bit
+    if bits == 3:
+        return MSE_SCORE_3BIT_U32_SOURCE.format(D=d, PACKED_D=packed_d)
+
     if bits == 1:
         eff_bits, vals_per_byte = 1, 8
     elif bits == 2:

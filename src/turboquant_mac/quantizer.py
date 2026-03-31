@@ -12,7 +12,12 @@ import numpy as np
 from typing import NamedTuple
 
 from turboquant_mac.codebook import get_codebook_arrays
-from turboquant_mac.rotation import generate_rotation_matrix, generate_qjl_matrix
+from turboquant_mac.rotation import (
+    generate_rotation_matrix,
+    generate_qjl_matrix,
+    generate_wht_signs,
+    apply_wht,
+)
 from turboquant_mac.backends import get_backend
 
 
@@ -45,7 +50,11 @@ def _get_packing_params(bits: int) -> tuple[int, int]:
 
 
 def _pack_indices(indices, bits: int, B):
-    """Bit-pack integer indices into uint8 bytes."""
+    """Bit-pack integer indices into uint8 bytes (or uint32 for 3-bit)."""
+    # Use efficient uint32 packing for 3-bit
+    if bits == 3:
+        return _pack_indices_3bit_u32(indices, B)
+
     eff_bits, vals_per_byte = _get_packing_params(bits)
     if vals_per_byte == 1:
         return B.to_uint8(indices)
@@ -66,6 +75,10 @@ def _pack_indices(indices, bits: int, B):
 
 def _unpack_indices(packed, bits: int, d: int, B):
     """Unpack bit-packed indices back to integer array."""
+    # Use efficient uint32 unpacking for 3-bit
+    if bits == 3:
+        return _unpack_indices_3bit_u32(packed, d, B)
+
     eff_bits, vals_per_byte = _get_packing_params(bits)
     if vals_per_byte == 1:
         return B.to_long(packed)
@@ -80,6 +93,51 @@ def _unpack_indices(packed, bits: int, d: int, B):
     if unpacked.shape[-1] > d:
         unpacked = unpacked[..., :d]
     return B.to_long(unpacked)
+
+
+def _pack_indices_3bit_u32(indices, B):
+    """Pack 3-bit indices into uint32 (10 values per uint32, using 30 of 32 bits).
+
+    19% more storage-efficient than rounding 3-bit to 4-bit uint8 packing.
+    """
+    d = indices.shape[-1]
+    batch_shape = indices.shape[:-1]
+    vals_per_word = 10  # 10 × 3-bit = 30 bits per uint32
+
+    # Pad to multiple of 10
+    padded_d = ((d + vals_per_word - 1) // vals_per_word) * vals_per_word
+    flat = B.to_numpy(indices).reshape(-1, d)
+    n_batch = flat.shape[0]
+
+    if padded_d > d:
+        flat = np.pad(flat, ((0, 0), (0, padded_d - d)), constant_values=0)
+
+    # Reshape to (n_batch, n_words, 10) and pack
+    flat = flat.reshape(n_batch, -1, vals_per_word).astype(np.uint32)
+    packed = np.zeros((n_batch, flat.shape[1]), dtype=np.uint32)
+    for i in range(vals_per_word):
+        packed |= flat[:, :, i] << (i * 3)
+
+    return B.from_numpy(packed.reshape(*batch_shape, -1))
+
+
+def _unpack_indices_3bit_u32(packed, d: int, B):
+    """Unpack 3-bit indices from uint32 back to integer array."""
+    batch_shape = packed.shape[:-1]
+    vals_per_word = 10
+    mask = 0x7  # 3-bit mask
+
+    flat = B.to_numpy(packed).reshape(-1, packed.shape[-1]).astype(np.uint32)
+    n_batch = flat.shape[0]
+
+    # Unpack 10 values per uint32
+    unpacked = np.zeros((n_batch, flat.shape[1] * vals_per_word), dtype=np.int64)
+    for i in range(vals_per_word):
+        unpacked[:, i::vals_per_word] = (flat >> (i * 3)) & mask
+
+    # Trim to original dimension
+    unpacked = unpacked[:, :d]
+    return B.from_numpy(unpacked.reshape(*batch_shape, d))
 
 
 def _pack_qjl_signs(projected, dim: int, B):
@@ -110,21 +168,37 @@ class TurboQuantMSE:
     """
     TurboQuant optimized for MSE (Algorithm 1).
 
-    Quantize: y = Pi * (x / ||x||), then find nearest centroid per coordinate.
+    Quantize: y = rotate(x / ||x||), then find nearest centroid per coordinate.
     Dequantize: look up centroids, rotate back, rescale by ||x||.
+
+    Supports two rotation modes:
+      - 'qr': Full d×d orthogonal matrix via QR decomposition. O(d²) per vector. Any d.
+      - 'wht': Randomized Walsh-Hadamard Transform via butterfly. O(d log d). Requires power-of-2 d.
     """
 
-    def __init__(self, dim: int, bits: int = 3, seed: int = 42, backend: str = None):
+    def __init__(self, dim: int, bits: int = 3, seed: int = 42, backend: str = None,
+                 rotation_mode: str = "qr"):
         self.dim = dim
         self.bits = bits
         self.n_clusters = 2**bits
+        self.rotation_mode = rotation_mode
 
         B = get_backend(backend)
         self._backend_name = backend
 
-        # Precompute rotation matrix (generated in NumPy, converted to backend)
-        Pi_np = generate_rotation_matrix(dim, seed=seed)
-        self.Pi = B.from_numpy(Pi_np)
+        # Precompute rotation
+        if rotation_mode == "wht":
+            signs_np = generate_wht_signs(dim, seed=seed)
+            self.wht_signs = B.from_numpy(signs_np)
+            self._wht_signs_np = signs_np
+            self.Pi = None  # Not used in WHT mode
+        elif rotation_mode == "qr":
+            Pi_np = generate_rotation_matrix(dim, seed=seed)
+            self.Pi = B.from_numpy(Pi_np)
+            self.wht_signs = None
+            self._wht_signs_np = None
+        else:
+            raise ValueError(f"Unknown rotation_mode: {rotation_mode}. Use 'qr' or 'wht'.")
 
         # Precompute codebook
         centroids_np, boundaries_np = get_codebook_arrays(dim, bits)
@@ -137,6 +211,26 @@ class TurboQuantMSE:
     def B(self):
         return get_backend(self._backend_name)
 
+    def _rotate_forward(self, x_unit):
+        """Apply forward rotation (QR matmul or WHT butterfly)."""
+        B = self.B
+        if self.rotation_mode == "wht":
+            x_np = B.to_numpy(B.to_float(x_unit))
+            y_np = apply_wht(x_np, self._wht_signs_np, inverse=False)
+            return B.from_numpy(y_np)
+        else:
+            return B.matmul(B.to_float(x_unit), B.transpose(self.Pi, 0, 1))
+
+    def _rotate_inverse(self, y):
+        """Apply inverse rotation (QR matmul or WHT butterfly)."""
+        B = self.B
+        if self.rotation_mode == "wht":
+            y_np = B.to_numpy(B.to_float(y))
+            x_np = apply_wht(y_np, self._wht_signs_np, inverse=True)
+            return B.from_numpy(x_np)
+        else:
+            return B.matmul(y, self.Pi)
+
     def quantize(self, x) -> MSEQuantized:
         """Quantize vectors x of shape (..., d)."""
         B = self.B
@@ -144,7 +238,7 @@ class TurboQuantMSE:
         x_unit = x / (B.unsqueeze(norms, -1) + 1e-10)
 
         # Apply random rotation
-        y = B.matmul(B.to_float(x_unit), B.transpose(self.Pi, 0, 1))
+        y = self._rotate_forward(x_unit)
 
         # Fused Metal encode (searchsorted + bit-pack) when available
         if self._backend_name != "pytorch":
@@ -171,7 +265,7 @@ class TurboQuantMSE:
         y_hat = B.index_select(self.centroids, indices)
 
         # Rotate back
-        x_hat = B.matmul(y_hat, self.Pi)
+        x_hat = self._rotate_inverse(y_hat)
 
         # Rescale
         x_hat = x_hat * B.unsqueeze(q.norms, -1)
@@ -194,17 +288,20 @@ class TurboQuantProd:
     The dequantized inner product estimate is unbiased: E[estimate] = <y, x>.
     """
 
-    def __init__(self, dim: int, bits: int = 3, seed: int = 42, backend: str = None):
+    def __init__(self, dim: int, bits: int = 3, seed: int = 42, backend: str = None,
+                 rotation_mode: str = "qr"):
         self.dim = dim
         self.bits = bits
         self._backend_name = backend
+        self.rotation_mode = rotation_mode
         assert bits >= 2, "Inner product TurboQuant requires at least 2 bits"
 
         B = get_backend(backend)
 
         # Stage 1: MSE quantizer at (b-1) bits
         self.mse_quantizer = TurboQuantMSE(
-            dim=dim, bits=bits - 1, seed=seed, backend=backend
+            dim=dim, bits=bits - 1, seed=seed, backend=backend,
+            rotation_mode=rotation_mode,
         )
 
         # Stage 2: QJL projection matrix
@@ -254,9 +351,26 @@ class TurboQuantProd:
 
         return x_mse + x_qjl
 
+    def _prerotate_query_metal(self, query):
+        """Pre-rotate query for Metal kernel: returns (q_rot, q_sketch)."""
+        import mlx.core as mx
+        query_f32 = query.astype(mx.float32)
+        if self.rotation_mode == "wht":
+            q_rot_np = apply_wht(
+                np.array(query_f32), self.mse_quantizer._wht_signs_np, inverse=False,
+            )
+            q_rot = mx.array(q_rot_np)
+        else:
+            q_rot = mx.matmul(query_f32, mx.transpose(self.mse_quantizer.Pi))
+        q_sketch = mx.matmul(query_f32, mx.transpose(self.S))
+        return q_rot, q_sketch
+
     def _attention_score_metal(self, query, quantized_key: ProdQuantized):
         """Compute attention scores using fused Metal kernels (MLX only)."""
-        from turboquant_mac.backends.metal_kernels import turboquant_attention_score_metal
+        from turboquant_mac.backends.metal_kernels import (
+            turboquant_mse_score_metal,
+            turboquant_qjl_score_metal,
+        )
 
         # Metal path expects (BH, D) for query — flatten batch dims
         orig_shape = query.shape  # (..., n_q, d)
@@ -265,6 +379,9 @@ class TurboQuantProd:
 
         # Flatten batch dims + n_q into single BH dimension
         flat_query = query.reshape(-1, self.dim)  # (BH*n_q, D)
+
+        # Pre-rotate query (handles both QR and WHT)
+        q_rot, q_sketch = self._prerotate_query_metal(flat_query)
 
         # For quantized data, flatten batch dims: (..., N, packed_d) -> (BH, N, packed_d)
         n_k = quantized_key.mse_indices.shape[-2]
@@ -278,43 +395,33 @@ class TurboQuantProd:
 
         n_batch_heads = flat_mse.shape[0]
 
-        # Metal kernel expects (BH, D) query — run per-query if n_q > 1
         import mlx.core as mx
         if n_q == 1:
-            scores_flat = turboquant_attention_score_metal(
-                query=flat_query.reshape(n_batch_heads, self.dim),
-                mse_packed=flat_mse,
-                qjl_signs=flat_signs,
-                norms=flat_norms,
-                residual_norms=flat_res_norms,
-                Pi=self.mse_quantizer.Pi,
-                S=self.S,
-                centroids=self.mse_quantizer.centroids,
-                mse_bits=quantized_key.mse_bits,
-                qjl_scale=self.qjl_scale,
-            )
-            return scores_flat.reshape(*batch_dims, 1, n_k)
+            q_r = q_rot.reshape(n_batch_heads, self.dim)
+            q_s = q_sketch.reshape(n_batch_heads, self.dim)
         else:
             # Multi-query: tile quantized data and batch all queries together
-            # Repeat quantized data n_q times along batch dim
-            tiled_mse = mx.repeat(flat_mse, n_q, axis=0)
-            tiled_signs = mx.repeat(flat_signs, n_q, axis=0)
-            tiled_norms = mx.repeat(flat_norms, n_q, axis=0)
-            tiled_res_norms = mx.repeat(flat_res_norms, n_q, axis=0)
+            flat_mse = mx.repeat(flat_mse, n_q, axis=0)
+            flat_signs = mx.repeat(flat_signs, n_q, axis=0)
+            flat_norms = mx.repeat(flat_norms, n_q, axis=0)
+            flat_res_norms = mx.repeat(flat_res_norms, n_q, axis=0)
+            q_r = q_rot
+            q_s = q_sketch
 
-            scores_flat = turboquant_attention_score_metal(
-                query=flat_query,
-                mse_packed=tiled_mse,
-                qjl_signs=tiled_signs,
-                norms=tiled_norms,
-                residual_norms=tiled_res_norms,
-                Pi=self.mse_quantizer.Pi,
-                S=self.S,
-                centroids=self.mse_quantizer.centroids,
-                mse_bits=quantized_key.mse_bits,
-                qjl_scale=self.qjl_scale,
-            )
-            return scores_flat.reshape(*batch_dims, n_q, n_k)
+        # MSE scores
+        scores = turboquant_mse_score_metal(
+            q_r, flat_mse, flat_norms,
+            self.mse_quantizer.centroids, quantized_key.mse_bits,
+        )
+        # Add QJL scores
+        scores = turboquant_qjl_score_metal(
+            q_s, flat_signs, flat_res_norms, self.qjl_scale, scores,
+        )
+
+        if n_q == 1:
+            return scores.reshape(*batch_dims, 1, n_k)
+        else:
+            return scores.reshape(*batch_dims, n_q, n_k)
 
     def _attention_score_python(self, query, quantized_key: ProdQuantized):
         """Compute attention scores using Python path (any backend)."""
