@@ -13,7 +13,7 @@ plugins {
 android {
     namespace  = "com.yzamari.turboquant"
     compileSdk = 34
-    ndkVersion = "26.3.11579264"
+    ndkVersion = "28.2.13676358"
 
     defaultConfig {
         applicationId = "com.yzamari.turboquant"
