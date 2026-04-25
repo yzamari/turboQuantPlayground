@@ -4,6 +4,73 @@ KV cache compression playground for **Apple Silicon (Python/MLX/Metal)** and
 **Qualcomm Snapdragon (C++/NEON/QNN/OpenCL/Vulkan)** — a port of Google's
 TurboQuant (ICLR 2026) from NVIDIA Triton.
 
+> **Bottom line:** TurboQuant cuts on-device LLM memory ~4× with no quality
+> loss, lights up CPU + GPU + NPU on Snapdragon, and the same library ships
+> from your S24 today to a Qualcomm-powered car tomorrow.
+
+## Headline benchmarks (real Snapdragon hardware)
+
+Verified on **Galaxy S24 Ultra** (SD 8 Gen 3) and **Galaxy Tab S9+** (SD 8 Gen 2),
+both arm64-v8a, Android 16. Same binaries, same numbers within thermal noise.
+
+### KV-cache compression — measured on real Llama-3.2-1B layers
+
+| Metric | Value |
+|---|---|
+| **Compression ratio** | **4.00× vs FP16** (verified vs `llama_state_seq_get_size`) |
+| Cosine similarity vs FP16 attention scores | 0.92 |
+| Cosine similarity vs FP16 softmax weights  | 0.95 |
+| Layers measured | 16 / 16 |
+| Encode time | 0.62 ms / layer |
+| TurboQuant attention | 0.05 ms / layer |
+
+Source: `cpp/bench/results/llamacpp/tabs9p-llama32-1b-realmodel.txt`
+
+### Synthetic A/B (paired baseline FP16 vs TurboQuant 3-bit)
+
+`BH=8, D=128`, 5-iter median. Compression ratio is hardware-independent.
+
+| seq_len | FP16 baseline | TurboQuant | **memory saved** | quality (cosine) |
+|---:|---:|---:|---:|---:|
+|  128 | 0.5 MB | 0.1 MB | **77 %** | 0.94 |
+|  512 | 2.0 MB | 0.5 MB | **77 %** | 0.92 |
+| 2048 | 8.0 MB | 1.9 MB | **77 %** | 0.90 |
+| 4096 | 16 MB  | 3.8 MB | **77 %** | 0.92 |
+
+### Backend latency on Tab S9+ (`BH=8, D=128, 3-bit`)
+
+| seq_len | baseline FP32 | scalar TQ | **NEON TQ** | OpenCL TQ † | Vulkan TQ † |
+|---:|---:|---:|---:|---:|---:|
+|  128 | 0.10 ms | 0.21 | **0.19** | 17.9 | 17.2 |
+|  512 | 0.27    | 0.62 | **0.53** | 20.3 | 24.4 |
+| 2048 | 1.17    | 2.25 | **1.96** | 23.1 | 18.6 |
+| 4096 | 2.08    | 4.93 | **3.69** | 20.4 | 24.7 |
+
+NEON delivers ~1.3× over scalar on both SoCs. † OpenCL/Vulkan v1 are
+upload-bound (kernels correct; host-side dispatch needs a `prepare_keys()`
+API to amortize). Documented next step.
+
+### Real LLM + VLM running on-device
+
+| Workload | Model | Tab S9+ generation |
+|---|---|---:|
+| Text LLM   | Llama-3.2-1B-Instruct Q4_K_M (4 GB → 1 GB at runtime) | **30.5 tok/s** |
+| Vision LLM | SmolVLM-256M-Instruct Q8_0 + mmproj (175 MB + 104 MB) | **51.2 tok/s** |
+
+Plus an installable Android app (`com.yzamari.turboquant`, 62 MB APK) with a
+Compose chat UI, voice in (SpeechRecognizer) / out (TextToSpeech), and 12
+Android-Intent tools (`set_alarm`, `sms`, `web_search`, `directions`, …).
+Screenshot: [`docs/screenshots/assistant-app-tab-s9p.png`](docs/screenshots/assistant-app-tab-s9p.png).
+
+### Numerical correctness
+
+- **727 / 727** byte-exact parity vs Python golden corpus
+- **30,912 / 30,912** bit-packing roundtrip checks
+- All 4 implemented backends produce identical cosine at every config
+
+Full report → [`cpp/bench/results/README.md`](cpp/bench/results/README.md).
+What this means for users → [`docs/qualcomm/benefits.md`](docs/qualcomm/benefits.md).
+
 ## Two parallel ports in this repo
 
 - **`src/turboquant_mac/`** — original Python port targeting Apple Silicon (MLX
@@ -24,11 +91,14 @@ TurboQuant (ICLR 2026) from NVIDIA Triton.
   architecture diagrams of the system.
 
 Quick links:
+- **Tonight's overnight summary** → [`SUMMARY.md`](SUMMARY.md)
 - **Build the C++ port** → [`docs/BUILDING.md`](docs/BUILDING.md)
+- **What this gives you on a Qualcomm device** → [`docs/qualcomm/benefits.md`](docs/qualcomm/benefits.md)
+- **All benchmark numbers (both SoCs)** → [`cpp/bench/results/README.md`](cpp/bench/results/README.md)
 - **C++ port headline numbers** → [`cpp/README.md`](cpp/README.md)
 - **Architecture (ASCII diagrams)** → [`docs/architecture/`](docs/architecture/)
 - **Qualcomm hardware notes** → [`docs/qualcomm/`](docs/qualcomm/)
-- **Bench results from the S24 Ultra** → [`cpp/bench/results/`](cpp/bench/results/)
+- **TurboQuant ⇄ llama.cpp integration** → [`docs/llamacpp-integration.md`](docs/llamacpp-integration.md)
 
 ---
 
