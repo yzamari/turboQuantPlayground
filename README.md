@@ -1,6 +1,42 @@
-# turboquant-mac
+# turboQuantPlayground
 
-KV cache compression for Apple Silicon -- a port of Google's TurboQuant (ICLR 2026) from NVIDIA Triton to MLX Metal kernels and PyTorch CPU.
+KV cache compression playground for **Apple Silicon (Python/MLX/Metal)** and
+**Qualcomm Snapdragon (C++/NEON/QNN/OpenCL/Vulkan)** — a port of Google's
+TurboQuant (ICLR 2026) from NVIDIA Triton.
+
+## Two parallel ports in this repo
+
+- **`src/turboquant_mac/`** — original Python port targeting Apple Silicon (MLX
+  Metal kernels + PyTorch CPU). See section "What this project does" below for
+  details. Verified on M4 Pro 48GB; benchmarks reproduced from the upstream
+  paper.
+- **`cpp/`** — **NEW**: plain-CMake C++17 port targeting **Qualcomm Snapdragon**
+  (mobile + automotive). Five backends: `cpu_scalar`, `cpu_neon`, `qnn_htp`,
+  `opencl`, `vulkan`. Verified end-to-end on a Samsung Galaxy S24 Ultra
+  (SM-S928B / SD 8 Gen 3 / Adreno 750 / Hexagon V75). **727/727 byte-exact
+  parity** vs the Python reference on host AND on the S24. See **`cpp/README.md`**
+  for headline benchmarks and **`docs/BUILDING.md`** for build instructions.
+- **`android/`** — **NEW**: Kotlin Compose demo app + JNI shim. Single-screen
+  UI runs the paired baseline-vs-TurboQuant benchmark on the device and shows
+  the speedup, compression ratio, and quality metrics side-by-side.
+- **`docs/`** — **NEW**: Qualcomm hardware documentation (Snapdragon mobile +
+  automotive lineup, Hexagon HTP, Adreno GPU, automotive ASIL notes) + ASCII
+  architecture diagrams of the system.
+
+Quick links:
+- **Build the C++ port** → [`docs/BUILDING.md`](docs/BUILDING.md)
+- **C++ port headline numbers** → [`cpp/README.md`](cpp/README.md)
+- **Architecture (ASCII diagrams)** → [`docs/architecture/`](docs/architecture/)
+- **Qualcomm hardware notes** → [`docs/qualcomm/`](docs/qualcomm/)
+- **Bench results from the S24 Ultra** → [`cpp/bench/results/`](cpp/bench/results/)
+
+---
+
+## Original (Python / Apple Silicon) project
+
+The MLX/Metal port below is the original Apple-Silicon implementation. The new
+C++ port is a separate target (no Python or MLX dependency at runtime) and lives
+under `cpp/`.
 
 ## What is TurboQuant?
 

@@ -1,0 +1,5 @@
+device,backend,seq_len,bh,d,bits,baseline_attn_ms,tq_attn_ms,attn_speedup,baseline_mem_bytes,tq_mem_bytes,compression_ratio,encode_ms,attn_score_cosine_sim,attn_output_rel_l2
+android,cpu_neon,128,8,128,3,0.0844686,0.196417,0.430048,524288,122880,4.26667,23.8447,0.936011,0.58351
+android,cpu_neon,512,8,128,3,0.255948,0.544073,0.47043,2097152,491520,4.26667,86.3928,0.92363,0.553958
+android,cpu_neon,2048,8,128,3,1.0787,1.82731,0.590319,8388608,1966080,4.26667,346.427,0.901977,0.663244
+android,cpu_neon,4096,8,128,3,2.06243,3.60748,0.571709,16777216,3932160,4.26667,681.402,0.918475,0.616765

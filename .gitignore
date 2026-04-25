@@ -12,3 +12,27 @@ venv/
 upstream/
 notebooks/*.png
 .DS_Store
+
+# C++ port build artifacts
+cpp/build-*/
+cpp/build/
+cpp/.cache/
+
+# Android Studio / Gradle
+android/.gradle/
+android/build/
+android/app/build/
+android/app/.cxx/
+android/local.properties
+android/.idea/
+android/captures/
+*.iml
+.gradle/
+android/gradle/wrapper/gradle-wrapper.jar
+android/gradlew
+android/gradlew.bat
+
+# Editor
+.vscode/
+*.swp
+*~
