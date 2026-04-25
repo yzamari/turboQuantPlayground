@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      Minimal Material 3 base theme. Compose drives all the actual styling
+      via MaterialTheme(); this XML theme just gives the system UI a sane
+      starting point (status bar, window background) before Compose mounts.
+    -->
+    <style name="Theme.TurboQuant" parent="android:Theme.Material.NoActionBar" />
+</resources>

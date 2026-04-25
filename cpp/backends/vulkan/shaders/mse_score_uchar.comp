@@ -1,0 +1,61 @@
+#version 450
+// Mirrors backends/opencl/kernels/mse_score.cl::mse_score_uchar
+// One invocation per (bh, n) output element.
+//
+// Inputs:
+//   q_rot[BH, D]              float
+//   mse[BH, N, packed_d]      uchar packed into uint words (4 uchars per uint, little-endian)
+//   norms[BH, N]              float
+//   centroids[2^bits]         float
+// Output:
+//   out[BH, N]                float
+//
+// We do not enable VK_KHR_8bit_storage; instead the byte buffer is
+// reinterpreted as a uint SSBO and we extract bytes via shifts/masks.
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) readonly buffer QRot     { float    q_rot[];     };
+layout(set = 0, binding = 1) readonly buffer MsePack  { uint     mse_words[]; };
+layout(set = 0, binding = 2) readonly buffer Norms    { float    norms[];     };
+layout(set = 0, binding = 3) readonly buffer Centroid { float    centroids[]; };
+layout(set = 0, binding = 4) writeonly buffer OutBuf  { float    out_buf[];   };
+
+layout(push_constant) uniform PC {
+    int BH;
+    int N;
+    int D;
+    int PACKED_D;
+    int BITS;
+    int VALS_PER_BYTE;
+    int MASK;
+} pc;
+
+// Read the packed-byte at logical byte offset `byte_idx_global` from the
+// underlying uint SSBO.
+uint read_byte(uint byte_idx_global) {
+    uint word_idx = byte_idx_global >> 2u;
+    uint sub      = byte_idx_global & 3u;
+    return (mse_words[word_idx] >> (sub * 8u)) & 0xFFu;
+}
+
+void main() {
+    int n  = int(gl_GlobalInvocationID.x);
+    int bh = int(gl_GlobalInvocationID.y);
+    if (n >= pc.N || bh >= pc.BH) return;
+
+    int row_byte_off = (bh * pc.N + n) * pc.PACKED_D;
+    int q_off        = bh * pc.D;
+
+    float score = 0.0;
+    for (int byte_idx = 0; byte_idx < pc.PACKED_D; ++byte_idx) {
+        uint packed = read_byte(uint(row_byte_off + byte_idx));
+        for (int sub = 0; sub < pc.VALS_PER_BYTE; ++sub) {
+            int coord = byte_idx * pc.VALS_PER_BYTE + sub;
+            if (coord >= pc.D) break;
+            int idx = int((packed >> uint(sub * pc.BITS)) & uint(pc.MASK));
+            score += q_rot[q_off + coord] * centroids[idx];
+        }
+    }
+    out_buf[bh * pc.N + n] = score * norms[bh * pc.N + n];
+}

@@ -1,0 +1,346 @@
+{
+  "format_version": 1,
+  "n_vectors": 32,
+  "n_queries": 1,
+  "rot_seed": 42,
+  "qjl_seed": 1042,
+  "backend": "pytorch",
+  "configs": [
+    {
+      "d": 64,
+      "bits": 2,
+      "N": 32,
+      "n_q": 1,
+      "rot_seed": 42,
+      "qjl_seed": 1042,
+      "mse_bits": 1,
+      "pi": "pi_d64_seed42.bin",
+      "pi_shape": [
+        64,
+        64
+      ],
+      "s": "s_d64_seed1042.bin",
+      "s_shape": [
+        64,
+        64
+      ],
+      "inputs": "inputs_d64_n32.bin",
+      "inputs_shape": [
+        32,
+        64
+      ],
+      "query": "query_d64_n_q1.bin",
+      "query_shape": [
+        1,
+        64
+      ],
+      "mse_indices": "prod_b2_d64.mse_indices.bin",
+      "mse_indices_shape": [
+        32,
+        8
+      ],
+      "mse_indices_dtype": "uint8",
+      "mse_indices_nbytes": 256,
+      "qjl_signs": "prod_b2_d64.qjl_signs.bin",
+      "qjl_signs_shape": [
+        32,
+        8
+      ],
+      "qjl_signs_dtype": "uint8",
+      "qjl_signs_nbytes": 256,
+      "norms": "prod_b2_d64.norms.bin",
+      "norms_shape": [
+        32
+      ],
+      "residual_norms": "prod_b2_d64.residual_norms.bin",
+      "residual_norms_shape": [
+        32
+      ],
+      "scores": "prod_b2_d64.scores.bin",
+      "scores_shape": [
+        1,
+        32
+      ]
+    },
+    {
+      "d": 64,
+      "bits": 3,
+      "N": 32,
+      "n_q": 1,
+      "rot_seed": 42,
+      "qjl_seed": 1042,
+      "mse_bits": 2,
+      "pi": "pi_d64_seed42.bin",
+      "pi_shape": [
+        64,
+        64
+      ],
+      "s": "s_d64_seed1042.bin",
+      "s_shape": [
+        64,
+        64
+      ],
+      "inputs": "inputs_d64_n32.bin",
+      "inputs_shape": [
+        32,
+        64
+      ],
+      "query": "query_d64_n_q1.bin",
+      "query_shape": [
+        1,
+        64
+      ],
+      "mse_indices": "prod_b3_d64.mse_indices.bin",
+      "mse_indices_shape": [
+        32,
+        16
+      ],
+      "mse_indices_dtype": "uint8",
+      "mse_indices_nbytes": 512,
+      "qjl_signs": "prod_b3_d64.qjl_signs.bin",
+      "qjl_signs_shape": [
+        32,
+        8
+      ],
+      "qjl_signs_dtype": "uint8",
+      "qjl_signs_nbytes": 256,
+      "norms": "prod_b3_d64.norms.bin",
+      "norms_shape": [
+        32
+      ],
+      "residual_norms": "prod_b3_d64.residual_norms.bin",
+      "residual_norms_shape": [
+        32
+      ],
+      "scores": "prod_b3_d64.scores.bin",
+      "scores_shape": [
+        1,
+        32
+      ]
+    },
+    {
+      "d": 64,
+      "bits": 4,
+      "N": 32,
+      "n_q": 1,
+      "rot_seed": 42,
+      "qjl_seed": 1042,
+      "mse_bits": 3,
+      "pi": "pi_d64_seed42.bin",
+      "pi_shape": [
+        64,
+        64
+      ],
+      "s": "s_d64_seed1042.bin",
+      "s_shape": [
+        64,
+        64
+      ],
+      "inputs": "inputs_d64_n32.bin",
+      "inputs_shape": [
+        32,
+        64
+      ],
+      "query": "query_d64_n_q1.bin",
+      "query_shape": [
+        1,
+        64
+      ],
+      "mse_indices": "prod_b4_d64.mse_indices.bin",
+      "mse_indices_shape": [
+        32,
+        7
+      ],
+      "mse_indices_dtype": "uint32",
+      "mse_indices_nbytes": 896,
+      "qjl_signs": "prod_b4_d64.qjl_signs.bin",
+      "qjl_signs_shape": [
+        32,
+        8
+      ],
+      "qjl_signs_dtype": "uint8",
+      "qjl_signs_nbytes": 256,
+      "norms": "prod_b4_d64.norms.bin",
+      "norms_shape": [
+        32
+      ],
+      "residual_norms": "prod_b4_d64.residual_norms.bin",
+      "residual_norms_shape": [
+        32
+      ],
+      "scores": "prod_b4_d64.scores.bin",
+      "scores_shape": [
+        1,
+        32
+      ]
+    },
+    {
+      "d": 128,
+      "bits": 2,
+      "N": 32,
+      "n_q": 1,
+      "rot_seed": 42,
+      "qjl_seed": 1042,
+      "mse_bits": 1,
+      "pi": "pi_d128_seed42.bin",
+      "pi_shape": [
+        128,
+        128
+      ],
+      "s": "s_d128_seed1042.bin",
+      "s_shape": [
+        128,
+        128
+      ],
+      "inputs": "inputs_d128_n32.bin",
+      "inputs_shape": [
+        32,
+        128
+      ],
+      "query": "query_d128_n_q1.bin",
+      "query_shape": [
+        1,
+        128
+      ],
+      "mse_indices": "prod_b2_d128.mse_indices.bin",
+      "mse_indices_shape": [
+        32,
+        16
+      ],
+      "mse_indices_dtype": "uint8",
+      "mse_indices_nbytes": 512,
+      "qjl_signs": "prod_b2_d128.qjl_signs.bin",
+      "qjl_signs_shape": [
+        32,
+        16
+      ],
+      "qjl_signs_dtype": "uint8",
+      "qjl_signs_nbytes": 512,
+      "norms": "prod_b2_d128.norms.bin",
+      "norms_shape": [
+        32
+      ],
+      "residual_norms": "prod_b2_d128.residual_norms.bin",
+      "residual_norms_shape": [
+        32
+      ],
+      "scores": "prod_b2_d128.scores.bin",
+      "scores_shape": [
+        1,
+        32
+      ]
+    },
+    {
+      "d": 128,
+      "bits": 3,
+      "N": 32,
+      "n_q": 1,
+      "rot_seed": 42,
+      "qjl_seed": 1042,
+      "mse_bits": 2,
+      "pi": "pi_d128_seed42.bin",
+      "pi_shape": [
+        128,
+        128
+      ],
+      "s": "s_d128_seed1042.bin",
+      "s_shape": [
+        128,
+        128
+      ],
+      "inputs": "inputs_d128_n32.bin",
+      "inputs_shape": [
+        32,
+        128
+      ],
+      "query": "query_d128_n_q1.bin",
+      "query_shape": [
+        1,
+        128
+      ],
+      "mse_indices": "prod_b3_d128.mse_indices.bin",
+      "mse_indices_shape": [
+        32,
+        32
+      ],
+      "mse_indices_dtype": "uint8",
+      "mse_indices_nbytes": 1024,
+      "qjl_signs": "prod_b3_d128.qjl_signs.bin",
+      "qjl_signs_shape": [
+        32,
+        16
+      ],
+      "qjl_signs_dtype": "uint8",
+      "qjl_signs_nbytes": 512,
+      "norms": "prod_b3_d128.norms.bin",
+      "norms_shape": [
+        32
+      ],
+      "residual_norms": "prod_b3_d128.residual_norms.bin",
+      "residual_norms_shape": [
+        32
+      ],
+      "scores": "prod_b3_d128.scores.bin",
+      "scores_shape": [
+        1,
+        32
+      ]
+    },
+    {
+      "d": 128,
+      "bits": 4,
+      "N": 32,
+      "n_q": 1,
+      "rot_seed": 42,
+      "qjl_seed": 1042,
+      "mse_bits": 3,
+      "pi": "pi_d128_seed42.bin",
+      "pi_shape": [
+        128,
+        128
+      ],
+      "s": "s_d128_seed1042.bin",
+      "s_shape": [
+        128,
+        128
+      ],
+      "inputs": "inputs_d128_n32.bin",
+      "inputs_shape": [
+        32,
+        128
+      ],
+      "query": "query_d128_n_q1.bin",
+      "query_shape": [
+        1,
+        128
+      ],
+      "mse_indices": "prod_b4_d128.mse_indices.bin",
+      "mse_indices_shape": [
+        32,
+        13
+      ],
+      "mse_indices_dtype": "uint32",
+      "mse_indices_nbytes": 1664,
+      "qjl_signs": "prod_b4_d128.qjl_signs.bin",
+      "qjl_signs_shape": [
+        32,
+        16
+      ],
+      "qjl_signs_dtype": "uint8",
+      "qjl_signs_nbytes": 512,
+      "norms": "prod_b4_d128.norms.bin",
+      "norms_shape": [
+        32
+      ],
+      "residual_norms": "prod_b4_d128.residual_norms.bin",
+      "residual_norms_shape": [
+        32
+      ],
+      "scores": "prod_b4_d128.scores.bin",
+      "scores_shape": [
+        1,
+        32
+      ]
+    }
+  ]
+}

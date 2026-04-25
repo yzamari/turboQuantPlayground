@@ -1,0 +1,44 @@
+#version 450
+// Mirrors backends/opencl/kernels/value_dequant.cl
+// One invocation per (batch_idx, coord) output element.
+// Packed buffer is reinterpreted as uint stream — bytes via shifts.
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) readonly  buffer Packed { uint  packed_w[]; };
+layout(set = 0, binding = 1) readonly  buffer Scale  { float scales[];   };
+layout(set = 0, binding = 2) readonly  buffer Zero   { float zeros[];    };
+layout(set = 0, binding = 3) writeonly buffer OutBuf { float out_buf[];  };
+
+layout(push_constant) uniform PC {
+    int N;
+    int D;
+    int BITS;
+    int VALS_PER_BYTE;
+    int MASK;
+    int GROUP_SIZE;
+    int N_GROUPS;
+    int PACKED_D;
+} pc;
+
+uint read_byte(uint byte_idx_global) {
+    uint word_idx = byte_idx_global >> 2u;
+    uint sub      = byte_idx_global & 3u;
+    return (packed_w[word_idx] >> (sub * 8u)) & 0xFFu;
+}
+
+void main() {
+    int coord     = int(gl_GlobalInvocationID.x);
+    int batch_idx = int(gl_GlobalInvocationID.y);
+    if (coord >= pc.D || batch_idx >= pc.N) return;
+
+    int byte_in_row = coord / pc.VALS_PER_BYTE;
+    int sub         = coord %  pc.VALS_PER_BYTE;
+    uint global_byte = uint(batch_idx * pc.PACKED_D + byte_in_row);
+    uint b = read_byte(global_byte);
+    int qval = int((b >> uint(sub * pc.BITS)) & uint(pc.MASK));
+    int g    = coord / pc.GROUP_SIZE;
+    out_buf[batch_idx * pc.D + coord] =
+        float(qval) * scales[batch_idx * pc.N_GROUPS + g] +
+                       zeros [batch_idx * pc.N_GROUPS + g];
+}

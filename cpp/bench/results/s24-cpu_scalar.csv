@@ -1,0 +1,5 @@
+device,backend,seq_len,bh,d,bits,baseline_attn_ms,tq_attn_ms,attn_speedup,baseline_mem_bytes,tq_mem_bytes,compression_ratio,encode_ms,attn_score_cosine_sim,attn_output_rel_l2
+android,cpu_scalar,128,8,128,3,0.0848854,0.227875,0.372509,524288,122880,4.26667,33.2987,0.936011,0.58351
+android,cpu_scalar,512,8,128,3,0.239948,0.631312,0.380078,2097152,491520,4.26667,106.693,0.92363,0.553958
+android,cpu_scalar,2048,8,128,3,0.968802,2.40055,0.403575,8388608,1966080,4.26667,437.873,0.901977,0.663244
+android,cpu_scalar,4096,8,128,3,1.9751,4.72141,0.41833,16777216,3932160,4.26667,898.063,0.918475,0.616765

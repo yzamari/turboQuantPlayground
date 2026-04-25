@@ -1,0 +1,40 @@
+#version 450
+// Mirrors backends/opencl/kernels/mse_encode.cl::mse_encode_u32_b3
+// 3-bit u32 path: 10 vals/word.
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) readonly  buffer Rotated { float rotated[];    };
+layout(set = 0, binding = 1) readonly  buffer Bound   { float boundaries[]; };
+layout(set = 0, binding = 2) writeonly buffer OutBuf  { uint  out_words[];  };
+
+layout(push_constant) uniform PC {
+    int N_BATCH;
+    int D;
+    int N_WORDS;
+} pc;
+
+void main() {
+    int word_idx  = int(gl_GlobalInvocationID.x);
+    int batch_idx = int(gl_GlobalInvocationID.y);
+    if (word_idx >= pc.N_WORDS || batch_idx >= pc.N_BATCH) return;
+
+    uint packed = 0u;
+    for (int sub = 0; sub < 10; ++sub) {
+        int coord = word_idx * 10 + sub;
+        if (coord < pc.D) {
+            float val = rotated[batch_idx * pc.D + coord];
+            int idx = 0;
+            // 3-bit -> 7 boundaries, fully unrolled
+            idx += int(val >= boundaries[0]);
+            idx += int(val >= boundaries[1]);
+            idx += int(val >= boundaries[2]);
+            idx += int(val >= boundaries[3]);
+            idx += int(val >= boundaries[4]);
+            idx += int(val >= boundaries[5]);
+            idx += int(val >= boundaries[6]);
+            packed |= (uint(idx) & 0x7u) << uint(sub * 3);
+        }
+    }
+    out_words[batch_idx * pc.N_WORDS + word_idx] = packed;
+}

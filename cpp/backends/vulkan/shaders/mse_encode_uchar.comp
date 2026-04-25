@@ -1,0 +1,62 @@
+#version 450
+// Mirrors backends/opencl/kernels/mse_encode.cl::mse_encode_uchar
+// One invocation per (batch_idx, word_idx) where the output byte buffer is
+// reinterpreted as uint words (4 bytes each). Each invocation computes up to
+// 4 packed bytes and writes a single uint — avoids atomics + zero-init cost.
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) readonly  buffer Rotated { float rotated[];    };
+layout(set = 0, binding = 1) readonly  buffer Bound   { float boundaries[]; };
+layout(set = 0, binding = 2) writeonly buffer OutBuf  { uint  out_words[];  };
+
+layout(push_constant) uniform PC {
+    int N_BATCH;
+    int D;
+    int PACKED_D;       // total bytes per row
+    int N_BOUNDARIES;
+    int BITS;
+    int VALS_PER_BYTE;
+    int MASK;
+    int N_WORDS_PER_ROW;  // ceil(PACKED_D / 4)
+    int N_WORDS_TOTAL;    // N_BATCH * N_WORDS_PER_ROW
+} pc;
+
+uint pack_byte(int batch_idx, int byte_idx) {
+    uint packed = 0u;
+    for (int sub = 0; sub < pc.VALS_PER_BYTE; ++sub) {
+        int coord = byte_idx * pc.VALS_PER_BYTE + sub;
+        if (coord < pc.D) {
+            float val = rotated[batch_idx * pc.D + coord];
+            int idx = 0;
+            for (int b = 0; b < pc.N_BOUNDARIES; ++b) {
+                idx += int(val >= boundaries[b]);
+            }
+            packed |= (uint(idx) & uint(pc.MASK)) << uint(sub * pc.BITS);
+        }
+    }
+    return packed & 0xFFu;
+}
+
+void main() {
+    int word_in_row = int(gl_GlobalInvocationID.x);
+    int batch_idx   = int(gl_GlobalInvocationID.y);
+    if (word_in_row >= pc.N_WORDS_PER_ROW || batch_idx >= pc.N_BATCH) return;
+
+    int base_byte = word_in_row * 4;
+    uint w = 0u;
+    for (int s = 0; s < 4; ++s) {
+        int byte_idx = base_byte + s;
+        if (byte_idx < pc.PACKED_D) {
+            w |= pack_byte(batch_idx, byte_idx) << uint(s * 8);
+        }
+    }
+    // The output is laid out as N_BATCH rows of PACKED_D bytes, NOT padded
+    // to a 4-byte boundary per row. We treat the whole flat byte array as a
+    // uint stream; the host side must size out_words = ceil(N_BATCH*PACKED_D/4).
+    // To match the byte layout, this kernel uses one word per (row, word_in_row),
+    // so we logically pad each row to a 4-byte multiple. The host must allocate
+    // and read using the same per-row stride (N_WORDS_PER_ROW * 4 bytes) and
+    // copy the first PACKED_D bytes of each row to the user buffer.
+    out_words[batch_idx * pc.N_WORDS_PER_ROW + word_in_row] = w;
+}

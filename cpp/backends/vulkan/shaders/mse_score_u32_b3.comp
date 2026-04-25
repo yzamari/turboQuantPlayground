@@ -1,0 +1,36 @@
+#version 450
+// Mirrors backends/opencl/kernels/mse_score.cl::mse_score_u32_b3
+// 3-bit special case: 10 vals per uint32 word.
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) readonly buffer QRot     { float q_rot[];     };
+layout(set = 0, binding = 1) readonly buffer MsePack  { uint  mse_words[]; };
+layout(set = 0, binding = 2) readonly buffer Norms    { float norms[];     };
+layout(set = 0, binding = 3) readonly buffer Centroid { float centroids[]; };
+layout(set = 0, binding = 4) writeonly buffer OutBuf  { float out_buf[];   };
+
+layout(push_constant) uniform PC {
+    int BH;
+    int N;
+    int D;
+    int N_WORDS;
+} pc;
+
+void main() {
+    int n  = int(gl_GlobalInvocationID.x);
+    int bh = int(gl_GlobalInvocationID.y);
+    if (n >= pc.N || bh >= pc.BH) return;
+
+    int row_off = (bh * pc.N + n) * pc.N_WORDS;
+    int q_off   = bh * pc.D;
+
+    float score = 0.0;
+    for (int j = 0; j < pc.D; ++j) {
+        int word = j / 10;
+        int sub  = j % 10;
+        int idx  = int((mse_words[row_off + word] >> uint(sub * 3)) & 0x7u);
+        score += q_rot[q_off + j] * centroids[idx];
+    }
+    out_buf[bh * pc.N + n] = score * norms[bh * pc.N + n];
+}

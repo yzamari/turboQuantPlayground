@@ -1,0 +1,47 @@
+#version 450
+// Mirrors backends/opencl/kernels/qjl_score.cl
+// Adds the QJL correction term to the incoming MSE score.
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) readonly buffer QSketch { float q_sketch[];  };
+layout(set = 0, binding = 1) readonly buffer Signs   { uint  signs_w[];   };  // packed bytes -> uints
+layout(set = 0, binding = 2) readonly buffer Rnorms  { float res_norms[]; };
+layout(set = 0, binding = 3) readonly buffer MseIn   { float mse_in[];    };
+layout(set = 0, binding = 4) writeonly buffer OutBuf { float out_buf[];   };
+
+layout(push_constant) uniform PC {
+    int   BH;
+    int   N;
+    int   D;
+    int   PACKED_D_SIGNS;
+    float QJL_SCALE;
+} pc;
+
+uint read_byte(uint byte_idx_global) {
+    uint word_idx = byte_idx_global >> 2u;
+    uint sub      = byte_idx_global & 3u;
+    return (signs_w[word_idx] >> (sub * 8u)) & 0xFFu;
+}
+
+void main() {
+    int n  = int(gl_GlobalInvocationID.x);
+    int bh = int(gl_GlobalInvocationID.y);
+    if (n >= pc.N || bh >= pc.BH) return;
+
+    int row_byte_off = (bh * pc.N + n) * pc.PACKED_D_SIGNS;
+    int q_off        = bh * pc.D;
+
+    float dot_v = 0.0;
+    for (int byte_idx = 0; byte_idx < pc.PACKED_D_SIGNS; ++byte_idx) {
+        uint packed = read_byte(uint(row_byte_off + byte_idx));
+        for (int bit = 0; bit < 8; ++bit) {
+            int coord = byte_idx * 8 + bit;
+            if (coord >= pc.D) break;
+            float s = (((packed >> uint(bit)) & 1u) != 0u) ? 1.0 : -1.0;
+            dot_v += q_sketch[q_off + coord] * s;
+        }
+    }
+    out_buf[bh * pc.N + n] =
+        mse_in[bh * pc.N + n] + dot_v * res_norms[bh * pc.N + n] * pc.QJL_SCALE;
+}

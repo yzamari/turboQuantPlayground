@@ -1,0 +1,26 @@
+#version 450
+// Simple GEMV-shaped rotate: out[i, j] = sum_k in[i, k] * Pi[j, k]   (= in @ Pi^T)
+// One thread per output element. For our shapes (n small, D=128) this is
+// adequate; a tiled SGEMM is overkill for the rotation step.
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) readonly  buffer InBuf  { float in_buf[];  };
+layout(set = 0, binding = 1) readonly  buffer PiBuf  { float pi_buf[];  };
+layout(set = 0, binding = 2) writeonly buffer OutBuf { float out_buf[]; };
+
+layout(push_constant) uniform PC {
+    int N;
+    int D;
+} pc;
+
+void main() {
+    int j = int(gl_GlobalInvocationID.x);
+    int i = int(gl_GlobalInvocationID.y);
+    if (j >= pc.D || i >= pc.N) return;
+    float s = 0.0;
+    for (int k = 0; k < pc.D; ++k) {
+        s += in_buf[i * pc.D + k] * pi_buf[j * pc.D + k];
+    }
+    out_buf[i * pc.D + j] = s;
+}
