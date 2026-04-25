@@ -52,19 +52,21 @@ struct Session {
 };
 
 // Single global flag — the first loadModel call performs ggml backend init.
-std::once_flag g_backend_init_flag;
+std::atomic<bool> g_backend_inited{false};
+std::mutex        g_backend_init_mu;
 
 void init_backends_once() {
-    std::call_once(g_backend_init_flag, []() {
-        // Quiet llama logging unless it's serious.
-        llama_log_set([](enum ggml_log_level level, const char * text, void * /*ud*/) {
-            if (level >= GGML_LOG_LEVEL_WARN) {
-                __android_log_print(ANDROID_LOG_INFO, "llama", "%s", text);
-            }
-        }, nullptr);
-        ggml_backend_load_all();
-        LOGI("ggml backends loaded");
-    });
+    if (g_backend_inited.load(std::memory_order_acquire)) return;
+    std::lock_guard<std::mutex> lk(g_backend_init_mu);
+    if (g_backend_inited.load(std::memory_order_relaxed)) return;
+    llama_log_set([](enum ggml_log_level level, const char * text, void * /*ud*/) {
+        if (level >= GGML_LOG_LEVEL_WARN) {
+            __android_log_print(ANDROID_LOG_INFO, "llama", "%s", text);
+        }
+    }, nullptr);
+    ggml_backend_load_all();
+    LOGI("ggml backends loaded");
+    g_backend_inited.store(true, std::memory_order_release);
 }
 
 std::string jstring_to_std(JNIEnv * env, jstring js) {
