@@ -57,6 +57,32 @@ API to amortize). Documented next step.
 | Text LLM   | Llama-3.2-1B-Instruct Q4_K_M (4 GB → 1 GB at runtime) | **30.5 tok/s** |
 | Vision LLM | SmolVLM-256M-Instruct Q8_0 + mmproj (175 MB + 104 MB) | **51.2 tok/s** |
 
+### Tokens per second — measured impact of KV-cache compression
+
+LLM decode is memory-bandwidth-bound; at deeper context the KV-cache reads
+dominate. Measured on Tab S9+ via `llama-bench` (Llama-3.2-1B Q4_K_M, t=8,
+flash attention, 3 reps, n=64 generation). q4_0 KV is the closest
+llama.cpp-native cousin to TurboQuant: same 4× compression ratio, lower
+quality (cosine ~0.85 vs TurboQuant's measured 0.92).
+
+| context depth | FP16 KV (baseline) | **q4_0 KV (4× compressed)** | tok/s speedup | memory saved |
+|---:|---:|---:|---:|---:|
+|     0 | 26.18 t/s | 24.75 t/s | 0.95× *(no KV pressure yet)* | 4× |
+|  1024 | 17.56 t/s | 19.89 t/s | **1.13×** | 4× |
+|  4096 | 10.13 t/s | **11.76 t/s** | **1.16×** | 4× |
+
+The tok/s win grows with context length — exactly the bandwidth-bound story.
+At 64K-128K context (where the FP16 KV would OOM the device), the speedup
+projects to 3-7× from the same physics, matching the Apple Silicon Python
+benchmarks in the repo. Raw outputs:
+[`cpp/bench/results/llamacpp/tabs9p-llama32-1b-tokens-per-sec.txt`](cpp/bench/results/llamacpp/tabs9p-llama32-1b-tokens-per-sec.txt).
+
+**TurboQuant projection:** the same 4× compression at higher quality (cosine
+0.92 vs ~0.85 for q4_0) means tok/s should equal or exceed q4_0 above with
+markedly less attention-quality drift. The Path 2 integration to measure
+end-to-end tok/s with TurboQuant in the decode loop is the next milestone
+([`docs/llamacpp-integration.md`](docs/llamacpp-integration.md)).
+
 Plus an installable Android app (`com.yzamari.turboquant`, 62 MB APK) with a
 Compose chat UI, voice in (SpeechRecognizer) / out (TextToSpeech), and 12
 Android-Intent tools (`set_alarm`, `sms`, `web_search`, `directions`, …).

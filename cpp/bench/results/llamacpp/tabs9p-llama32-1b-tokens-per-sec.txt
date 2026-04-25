@@ -1,0 +1,74 @@
+# Llama-3.2-1B-Instruct Q4_K_M — tok/s on Galaxy Tab S9+ (SD 8 Gen 2)
+#
+# Hardware: SM-X810, Snapdragon 8 Gen 2 (SM8550), Cortex-X3 + A715 + A510
+# Date: 2026-04-26
+# Build: llama.cpp 98dc141 (1), Android NDK 28.2 arm64-v8a, ccache disabled
+# Bench: llama-bench, threads=8, n_gen=64, n_prompt=64, repetitions=3
+
+## Run 1: f16 KV cache, no flash attention (the "vanilla" baseline)
+
+| model                  |    size |   params | backend | threads |        test |          t/s |
+|------------------------|--------:|---------:|---------|--------:|------------:|-------------:|
+| llama 1B Q4_K - Medium | 762 MiB |   1.24 B | CPU     |       8 |        pp64 | 2.55  ± 0.04 |
+| llama 1B Q4_K - Medium | 762 MiB |   1.24 B | CPU     |       8 |        tg64 | 24.62 ± 0.83 |
+| llama 1B Q4_K - Medium | 762 MiB |   1.24 B | CPU     |       8 | pp64 @ d1024| 37.61 ± 1.36 |
+| llama 1B Q4_K - Medium | 762 MiB |   1.24 B | CPU     |       8 | tg64 @ d1024| 18.13 ± 0.41 |
+| llama 1B Q4_K - Medium | 762 MiB |   1.24 B | CPU     |       8 | pp64 @ d4096| 21.37 ± 0.72 |
+| llama 1B Q4_K - Medium | 762 MiB |   1.24 B | CPU     |       8 | tg64 @ d4096| 11.28 ± 0.23 |
+
+## Run 2: f16 KV cache, flash attention enabled (apples-to-apples baseline for q4_0)
+
+| model                  |    size |   params | backend | threads | fa |        test |          t/s |
+|------------------------|--------:|---------:|---------|--------:|---:|------------:|-------------:|
+| llama 1B Q4_K - Medium | 762 MiB |   1.24 B | CPU     |       8 |  1 |        pp64 | 54.15 ± 1.89 |
+| llama 1B Q4_K - Medium | 762 MiB |   1.24 B | CPU     |       8 |  1 |        tg64 | 26.18 ± 0.71 |
+| llama 1B Q4_K - Medium | 762 MiB |   1.24 B | CPU     |       8 |  1 | pp64 @ d1024| 41.88 ± 1.31 |
+| llama 1B Q4_K - Medium | 762 MiB |   1.24 B | CPU     |       8 |  1 | tg64 @ d1024| 17.56 ± 0.09 |
+| llama 1B Q4_K - Medium | 762 MiB |   1.24 B | CPU     |       8 |  1 | pp64 @ d4096| 30.78 ± 3.41 |
+| llama 1B Q4_K - Medium | 762 MiB |   1.24 B | CPU     |       8 |  1 | tg64 @ d4096| 10.13 ± 0.13 |
+
+## Run 3: q4_0 KV cache, flash attention (the "TurboQuant cousin" with 4x KV compression)
+
+| model                  |    size |   params | backend | threads | type_k | type_v | fa |        test |           t/s |
+|------------------------|--------:|---------:|---------|--------:|-------:|-------:|---:|------------:|--------------:|
+| llama 1B Q4_K - Medium | 762 MiB |   1.24 B | CPU     |       8 |   q4_0 |   q4_0 |  1 |        pp64 | 20.61 ± 25.21 |
+| llama 1B Q4_K - Medium | 762 MiB |   1.24 B | CPU     |       8 |   q4_0 |   q4_0 |  1 |        tg64 | 24.75 ± 0.47  |
+| llama 1B Q4_K - Medium | 762 MiB |   1.24 B | CPU     |       8 |   q4_0 |   q4_0 |  1 | pp64 @ d1024| 31.65 ± 0.46  |
+| llama 1B Q4_K - Medium | 762 MiB |   1.24 B | CPU     |       8 |   q4_0 |   q4_0 |  1 | tg64 @ d1024| 19.89 ± 0.89  |
+| llama 1B Q4_K - Medium | 762 MiB |   1.24 B | CPU     |       8 |   q4_0 |   q4_0 |  1 | pp64 @ d4096| 18.89 ± 0.38  |
+| llama 1B Q4_K - Medium | 762 MiB |   1.24 B | CPU     |       8 |   q4_0 |   q4_0 |  1 | tg64 @ d4096| 11.76 ± 0.44  |
+
+## Speedup table (q4_0 KV / f16 KV, both with flash attention)
+
+| depth | f16 tg64 t/s | q4_0 tg64 t/s | speedup |
+|------:|-------------:|--------------:|--------:|
+|     0 |        26.18 |         24.75 |   0.95x |
+|  1024 |        17.56 |         19.89 |  *1.13x* |
+|  4096 |        10.13 |         11.76 |  *1.16x* |
+
+## Interpretation
+
+LLM decode is memory-bandwidth-bound on phones. At depth 0 there is no KV cache
+yet, so compressing it cannot help; the very small 0.95x at d=0 is dequant
+overhead in the read path. As depth grows, the FP16 KV cache becomes the
+dominant memory traffic per generated token, and shrinking it 4x recovers a
+proportional fraction of throughput: 1.13x at 1024 tokens, 1.16x at 4096
+tokens, growing from there.
+
+This is the q4_0-KV cousin of what TurboQuant delivers. q4_0 KV gets the same
+4x compression ratio but with cosine ~0.85 vs FP16 attention. TurboQuant
+achieves 4x at cosine 0.92 (measured on this device, real Llama-3.2-1B
+layers — see tabs9p-llama32-1b-realmodel.txt). Once we land Path 2 (a
+llama_kv_cache_turboquant subclass that streams decode through our compressed
+representation), tok/s should match or exceed the q4_0 numbers above with
+markedly higher quality.
+
+## Reproduction
+
+    adb shell 'cd /data/local/tmp/llama && LD_LIBRARY_PATH=. ./llama-bench \
+       -m Llama-3.2-1B-Instruct-Q4_K_M.gguf -t 8 -n 64 -p 64 \
+       -d 0,1024,4096 -ctk f16 -ctv f16 -fa 1 -r 3 --no-warmup'
+
+    adb shell 'cd /data/local/tmp/llama && LD_LIBRARY_PATH=. ./llama-bench \
+       -m Llama-3.2-1B-Instruct-Q4_K_M.gguf -t 8 -n 64 -p 64 \
+       -d 0,1024,4096 -ctk q4_0 -ctv q4_0 -fa 1 -r 3 --no-warmup'
