@@ -35,11 +35,13 @@ android {
                     "-DTQ_BUILD_BENCH=OFF",
                     "-DTQ_WITH_CPU_SCALAR=ON",
                     "-DTQ_WITH_NEON=ON",
-                    "-DTQ_WITH_OPENCL=ON",
-                    "-DTQ_WITH_VULKAN=ON",
+                    "-DTQ_WITH_OPENCL=OFF",
+                    "-DTQ_WITH_VULKAN=OFF",
                     "-DTQ_WITH_QNN=OFF",
                 )
-                cppFlags += listOf("-std=c++17", "-O3", "-fno-exceptions", "-fno-rtti")
+                // Note: exceptions/rtti must be enabled because the cpp/ core
+                // throws std::invalid_argument from kv_cache.cpp & quantizer.cpp.
+                cppFlags += listOf("-std=c++17", "-O3")
             }
         }
     }

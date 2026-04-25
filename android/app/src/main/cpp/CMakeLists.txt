@@ -31,8 +31,11 @@ set(TQ_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 
 set(TQ_WITH_CPU_SCALAR ON  CACHE BOOL "" FORCE)
 set(TQ_WITH_NEON       ON  CACHE BOOL "" FORCE)
-set(TQ_WITH_OPENCL     ON  CACHE BOOL "" FORCE)
-set(TQ_WITH_VULKAN     ON  CACHE BOOL "" FORCE)
+# OpenCL/Vulkan backends in cpp/backends/ reference CMAKE_SOURCE_DIR which
+# points at this JNI tree when used via add_subdirectory — disable them in
+# the assistant build (the bench still has cpu_scalar + cpu_neon to compare).
+set(TQ_WITH_OPENCL     OFF CACHE BOOL "" FORCE)
+set(TQ_WITH_VULKAN     OFF CACHE BOOL "" FORCE)
 set(TQ_WITH_QNN        OFF CACHE BOOL "" FORCE)
 
 # Path from this file up to the repo root, then into cpp/:
