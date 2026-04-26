@@ -239,23 +239,38 @@ class AssistantViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun describeImage(imagePath: String, prompt: String? = null) {
         val userBubble = ChatEntry.User("📷 (sent an image to the assistant)")
-        val replyEntry = ChatEntry.AssistantMsg("Looking at the image…", streaming = true)
         messages.add(userBubble)
-        messages.add(replyEntry)
+        // Add the streaming placeholder; remember its index, not its instance,
+        // so we can keep updating the same slot as we replace immutable copies.
+        messages.add(ChatEntry.AssistantMsg("Looking at the image…", streaming = true))
+        val slotIndex = messages.lastIndex
         generating = true
         val startMs = System.currentTimeMillis()
+        val streamBuilder = StringBuilder()
         generationJob = viewModelScope.launch {
             val result = withContext(Dispatchers.IO) {
                 runCatching {
-                    vlm.describe(imagePath, prompt ?: "Describe this image in detail.")
+                    vlm.describe(
+                        imagePath,
+                        prompt ?: "Describe this image in detail.",
+                    ) { piece ->
+                        streamBuilder.append(piece)
+                        viewModelScope.launch(Dispatchers.Main) {
+                            if (slotIndex < messages.size) {
+                                messages[slotIndex] = ChatEntry.AssistantMsg(
+                                    text = streamBuilder.toString().trim(),
+                                    streaming = true,
+                                )
+                            }
+                        }
+                    }
                 }.onFailure { Log.e(TAG, "VLM failed", it) }
                  .getOrElse { VlmRunner.Result(reply = "(VLM error: ${it.localizedMessage ?: it})", stats = "") }
             }
             val elapsedMs = System.currentTimeMillis() - startMs
             withContext(Dispatchers.Main) {
-                val idx = messages.indexOf(replyEntry)
-                if (idx >= 0) {
-                    messages[idx] = ChatEntry.AssistantMsg(
+                if (slotIndex < messages.size) {
+                    messages[slotIndex] = ChatEntry.AssistantMsg(
                         text = result.reply.trim().ifBlank { "(empty reply)" },
                         streaming = false,
                         timing = "⏱ ${"%.1f".format(elapsedMs / 1000.0)}s · SmolVLM-256M",

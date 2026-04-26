@@ -123,10 +123,13 @@ class Assistant(
                 LlamaNative.generate(handle, prompt, maxTokensPerTurn) { piece ->
                     collected.append(piece)
                     if (!sawJson) {
-                        // Stop streaming as soon as we see ANY JSON-like brace —
-                        // small models often emit malformed tool calls that
-                        // shouldn't reach the UI.
-                        if (collected.contains('{')) {
+                        // Stop streaming once a tool-call JSON looks like it's
+                        // starting. Use a tighter heuristic ({"tool, with the
+                        // double-quote) so legitimate prose-with-curly-braces
+                        // isn't muted. Malformed tool calls that get past this
+                        // are stripped by sanitizeForUser() before they reach
+                        // the chat bubble.
+                        if (collected.contains("{\"tool")) {
                             sawJson = true
                         } else {
                             trySend(AssistantEvent.Token(piece))

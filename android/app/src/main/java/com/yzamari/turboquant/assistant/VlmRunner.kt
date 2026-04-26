@@ -56,11 +56,13 @@ class VlmRunner(private val ctx: Context) {
     /** Result of one VLM run: the model's reply + a one-line stats string. */
     data class Result(val reply: String, val stats: String)
 
+    /** Stream the VLM's tokens to a callback as they appear. */
     suspend fun describe(
         imagePath: String,
         prompt: String = "Describe this image in detail.",
         maxTokens: Int = 200,
         threads: Int = 8,
+        onToken: ((String) -> Unit)? = null,
     ): Result = withContext(Dispatchers.IO) {
         val startMs = System.currentTimeMillis()
         val filesDir = ctx.getExternalFilesDir(null)
@@ -83,22 +85,69 @@ class VlmRunner(private val ctx: Context) {
         )
         val env = arrayOf("LD_LIBRARY_PATH=$nativeDir")
         Log.i(TAG, "exec: ${cmd.joinToString(" ")}")
-        val proc = Runtime.getRuntime().exec(cmd, env)
-        val stdout = proc.inputStream.bufferedReader().readText()
-        val stderr = proc.errorStream.bufferedReader().readText()
-        proc.waitFor(120, TimeUnit.SECONDS)
-        Log.d(TAG, "stdout=${stdout.length} bytes, stderr=${stderr.length} bytes")
+        // Merge stderr → stdout so we see "image decoded" / "llama_perf_*"
+        // sentinels (printed on stderr) and the model's actual reply (stdout)
+        // in one unified stream.
+        val pb = ProcessBuilder(*cmd)
+            .redirectErrorStream(true)
+        for (e in env) {
+            val (k, v) = e.split('=', limit = 2)
+            pb.environment()[k] = v
+        }
+        val proc = pb.start()
 
-        // The model's actual reply is the lines AFTER "image decoded" and
-        // BEFORE the perf summary lines. Heuristic but reliable on mtmd-cli.
-        val lines = stdout.lines()
-        val start = lines.indexOfFirst { it.contains("image decoded") }
-        val end   = lines.indexOfFirst { it.startsWith("llama_perf_") }
-            .takeIf { it >= 0 } ?: lines.size
-        val reply = if (start >= 0 && end > start)
-            lines.subList(start + 1, end).joinToString(" ").trim()
-        else
-            stdout.trim()
+        // Read everything synchronously. Periodically emit the parsed reply
+        // text so far via onToken so the UI sees the description forming.
+        val stdoutBuf = StringBuilder()
+        var lastEmittedLen = 0
+        val readerThread = Thread {
+            try {
+                val br = proc.inputStream.bufferedReader()
+                val buf = CharArray(512)
+                while (true) {
+                    val n = br.read(buf)
+                    if (n < 0) break
+                    stdoutBuf.append(buf, 0, n)
+                    // Live-parse the reply window and emit any new portion.
+                    val s = stdoutBuf.indexOf("image decoded")
+                    if (s >= 0) {
+                        val replyStart = stdoutBuf.indexOf('\n', s + 14).let { if (it < 0) -1 else it + 1 }
+                        if (replyStart > 0) {
+                            val perfIdx = stdoutBuf.indexOf("llama_perf_", replyStart)
+                            val end = if (perfIdx >= 0) perfIdx else stdoutBuf.length
+                            if (end > replyStart + lastEmittedLen) {
+                                val piece = stdoutBuf.substring(replyStart + lastEmittedLen, end)
+                                lastEmittedLen = end - replyStart
+                                if (piece.isNotEmpty()) onToken?.invoke(piece)
+                            }
+                        }
+                    }
+                }
+            } catch (t: Throwable) {
+                Log.w(TAG, "reader thread: $t")
+            }
+        }.apply { isDaemon = true; start() }
+
+        if (!proc.waitFor(180, TimeUnit.SECONDS)) {
+            proc.destroyForcibly()
+            return@withContext Result(reply = "(VLM timed out after 180s)", stats = "")
+        }
+        readerThread.join(3000)
+        val stdout = stdoutBuf.toString()
+        val stderr = ""  // merged into stdout above
+        Log.d(TAG, "merged stdout=${stdout.length} bytes; head=${stdout.take(200)}")
+        // Robust reply extraction from the merged stdout. The model's text
+        // sits between "image decoded (batch …) in N ms\n\n" and the first
+        // "llama_perf_" line.
+        val reply = run {
+            val s = stdout.indexOf("image decoded")
+            if (s < 0) return@run stdout.trim()
+            val nl = stdout.indexOf('\n', s + 14)
+            if (nl < 0) return@run ""
+            val e = stdout.indexOf("llama_perf_", nl + 1)
+            val end = if (e >= 0) e else stdout.length
+            stdout.substring(nl + 1, end).trim()
+        }
 
         // Parse perf lines for tok/s. mtmd-cli prints e.g.:
         //   llama_perf_context_print: prompt eval time = ... (11.02 tokens per second)

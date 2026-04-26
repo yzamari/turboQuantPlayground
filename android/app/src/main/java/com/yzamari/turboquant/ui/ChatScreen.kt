@@ -381,6 +381,15 @@ private fun ChatBubble(entry: ChatEntry) {
                 androidx.compose.foundation.layout.Column(
                     modifier = Modifier.widthIn(max = 480.dp)
                 ) {
+                    if (entry.streaming) {
+                        Text(
+                            "✦ thinking…",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontFamily = FontFamily.Monospace,
+                            color = MaterialTheme.colorScheme.tertiary,
+                            modifier = Modifier.padding(start = 4.dp, bottom = 2.dp),
+                        )
+                    }
                     Card(
                         colors = CardDefaults.cardColors(
                             containerColor = MaterialTheme.colorScheme.surfaceVariant,
