@@ -172,6 +172,38 @@ ValueQuantized quantize_values(const float* v, int n_vec, int d,
 
 void dequantize_values(const ValueQuantized& vq, float* out);
 
+// ---- Stateless single-call attention via TurboQuant (Path 2.1c Step 1) ----
+//
+// One-shot attention: feed Q, K, V, get masked + softmaxed attention output
+// back. Internally builds a TurboQuantKVCache, prefills K/V (compressed),
+// computes attention_scores against Q, applies the optional additive mask,
+// softmaxes, and finally calls attend(). No persistent state — each call
+// constructs a throwaway cache.
+//
+// This is the bridge function our llama.cpp fork calls from the substituted
+// attention path (`ggml_map_custom3` op forward in the fork's
+// llama-graph.cpp) so the on-device chat decoder can route through TurboQuant
+// without taking a libturboquant link dependency on llama.cpp itself.
+//
+// Layouts (all row-major):
+//   q     : [BH * n_q  * D]
+//   k     : [BH * n_kv * D]   — full K cache for the current attention call
+//   v     : [BH * n_kv * D]   — full V cache for the current attention call
+//   mask  : [n_q * n_kv] or NULL — additive (-INF for masked positions),
+//           consumed pre-softmax exactly like ggml_soft_max_ext
+//   out   : [BH * n_q  * D]   — attention output
+//   BH    : batch * n_head_kv (caller folds the GQA ratio if needed)
+//   scale : 0.f → defaults to 1/sqrt(D)
+//   seed  : per-layer RNG seed for the rotation Pi + QJL S matrices.
+//           Convention used elsewhere in the project is 42 + 7*layer_idx.
+void attention_turboquant(
+    const float* q, const float* k, const float* v,
+    int BH, int n_q, int n_kv, int D,
+    float scale, const float* mask, float* out,
+    int key_bits   = 3,
+    int value_bits = 2,
+    uint64_t seed  = 42);
+
 // ---- Build info ----
 const char* version_string();
 

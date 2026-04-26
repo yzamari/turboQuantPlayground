@@ -19,3 +19,9 @@ target_link_libraries(tq_parity_test PRIVATE turboquant)
 target_compile_definitions(tq_parity_test PRIVATE
     TQ_GOLDEN_DIR="${CMAKE_SOURCE_DIR}/tests/golden")
 add_test(NAME parity COMMAND tq_parity_test)
+
+# attention_turboquant() — Path 2.1c Step 1 stateless attention bridge.
+# Parity vs hand-rolled FP32 reference at BH=8, D=128, n_kv=512, key_bits=3.
+add_executable(tq_attention_turboquant_test attention_turboquant_test.cpp)
+target_link_libraries(tq_attention_turboquant_test PRIVATE turboquant)
+add_test(NAME attention_turboquant COMMAND tq_attention_turboquant_test)
