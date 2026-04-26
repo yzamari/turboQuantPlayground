@@ -6,13 +6,14 @@ We're working in /Users/yahavzamari/Projects/GitHub/turboQuantPlayground.
 Last session ended with the Adreno OpenCL fix on the branch
 fix/adreno-opencl-uses-native-library — verified working on S24 Ultra
 (SmolVLM decode at 9 tok/s on Adreno, no more "platform IDs not available"
-log). One commit ahead of origin/main, working tree clean.
+log). PR #24 is open: https://github.com/yzamari/turboQuantPlayground/pull/24
+— not yet merged.
 
 Read docs/handoff-2026-04-26-evening.md for the full context. The previous
 day's handoff (docs/handoff-2026-04-26.md) is the parent context.
 
-Today's first task is to push the fix branch and open the PR. After that,
-the open decisions in the handoff are:
+If PR #24 has been merged by the time you start, sync main first
+(git checkout main && git pull). Open decisions in the handoff:
   A2 — re-test Tab S9+ chat decode with the fix (separate device, same fix
        should apply since Tab S9+ also has vendor libOpenCL.so).
   B  — resume Path 2.1c (custom ggml attention op for kvType=3 — the
