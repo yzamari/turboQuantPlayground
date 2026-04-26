@@ -29,6 +29,8 @@ Source: `cpp/bench/results/llamacpp/tabs9p-llama32-1b-realmodel.txt`
 ### Synthetic A/B (paired baseline FP16 vs TurboQuant 3-bit)
 
 `BH=8, D=128`, 5-iter median. Compression ratio is hardware-independent.
+Fresh re-run on Galaxy S24 Ultra (SM-S928B) on 2026-04-26:
+[`cpp/bench/results/s24-cpu_neon-2026-04-26.csv`](cpp/bench/results/s24-cpu_neon-2026-04-26.csv).
 
 | seq_len | FP16 baseline | TurboQuant | **memory saved** | quality (cosine) |
 |---:|---:|---:|---:|---:|
@@ -131,12 +133,11 @@ markedly less attention-quality drift. The Path 2 integration to measure
 end-to-end tok/s with TurboQuant in the decode loop is the next milestone
 ([`docs/llamacpp-integration.md`](docs/llamacpp-integration.md)).
 
-**Path 2 progress (in flight on `feat/path2-llamacpp-source-build`).**
+**Path 2 progress (merged to `main`).**
 - ✅ **P2.0** — vendored upstream llama.cpp at `b8935` as a long-running
   fork at [`yzamari/llama.cpp`](https://github.com/yzamari/llama.cpp)
-  (branch `tq-main`), wired into the Android NDK build via
-  `-PbuildLlamaFromSource=true`. APK now ships from-source libraries
-  matching the prebuilts within 0.5%.
+  (branch `tq-main`). The Android NDK build links from-source by default;
+  APK ships from-source libraries matching the prebuilts within 0.5%.
 - ✅ **P2.1 scaffold** — `bool kv_turboquant` plumbed end-to-end through
   `llama_context_params` → `llama_memory_params` → `llama_kv_cache_turboquant`
   (new derived class) → `llama_jni.cpp` (`kvType=3`) → Settings UI
@@ -147,14 +148,34 @@ end-to-end tok/s with TurboQuant in the decode loop is the next milestone
   and replacing the `Q@K.T → softmax → attn@V` triple in
   `llama-graph.cpp:1998-2042` with a `ggml_map_custom3` op that calls
   `attention_scores()` + `attend()` from `cpp/include/turboquant/api.hpp`.
-  The integration shape is fixed; the algorithm lands in a follow-up
-  commit on `tq-main` without further plumbing churn.
+  Step-by-step playbook in [`docs/path2-algorithm-playbook.md`](docs/path2-algorithm-playbook.md);
+  ~3–4 weeks scoped, picks up cold from there.
 - ⏸ **P2.2 / P2.3** — Adreno on the TurboQuant hot path + paired A/B
   bench in real chat are gated on the algorithm.
 
-Plus an installable Android app (`com.yzamari.turboquant`, 62 MB APK) with a
-Compose chat UI, voice in (SpeechRecognizer) / out (TextToSpeech), and 12
-Android-Intent tools (`set_alarm`, `sms`, `web_search`, `directions`, …).
+### On-device VLM — live camera + persistent session
+
+The Android assistant app (`com.yzamari.turboquant`, 4 tabs:
+*Assistant · Live · Bench · Settings*) now ships:
+
+- **Live camera tab** with continuous on-device VLM captioning. CameraX
+  `ImageAnalysis` (640×480, `KEEP_ONLY_LATEST`) + a single-flight gate
+  feeds frames to the persistent VLM session as fast as the model decodes;
+  the bottom caption card streams tokens in. Steady-state on Adreno:
+  **~1 FPS for SmolVLM-256M**, ~0.2 FPS for Qwen2.5-VL-3B.
+- **Persistent in-process mtmd session** (PR #10) — replaces the
+  previous fork-per-image `Runtime.exec("libllama-mtmd-cli.so")` pattern.
+  LLM + mmproj load once on first describe (), every subsequent image
+  pays only encode + decode. Per-image latency: ~3.4 s → ~0.8–1.2 s warm.
+- **Image input downscaling** (PR #8) — gallery/camera images cap at
+  longest-side 1024 px before the VLM, cuts the SigLIP/clip.cpp resize
+  cost ~10–20× vs raw 12 MP camera input.
+- **Single-shot chat** (Assistant tab) — text LLM + voice in/out (Android
+  `SpeechRecognizer` + `TextToSpeech`) + 12 Android-Intent tools (alarm,
+  SMS, web search, directions, etc.) dispatched from JSON the LLM emits.
+- **Settings → Vision (VLM) model** — radio between SmolVLM-256M
+  (default, faster) and Qwen2.5-VL-3B (multilingual, higher quality).
+
 Screenshot: [`docs/screenshots/assistant-app-tab-s9p.png`](docs/screenshots/assistant-app-tab-s9p.png).
 
 ### Numerical correctness
