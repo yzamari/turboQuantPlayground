@@ -131,6 +131,27 @@ markedly less attention-quality drift. The Path 2 integration to measure
 end-to-end tok/s with TurboQuant in the decode loop is the next milestone
 ([`docs/llamacpp-integration.md`](docs/llamacpp-integration.md)).
 
+**Path 2 progress (in flight on `feat/path2-llamacpp-source-build`).**
+- ✅ **P2.0** — vendored upstream llama.cpp at `b8935` as a long-running
+  fork at [`yzamari/llama.cpp`](https://github.com/yzamari/llama.cpp)
+  (branch `tq-main`), wired into the Android NDK build via
+  `-PbuildLlamaFromSource=true`. APK now ships from-source libraries
+  matching the prebuilts within 0.5%.
+- ✅ **P2.1 scaffold** — `bool kv_turboquant` plumbed end-to-end through
+  `llama_context_params` → `llama_memory_params` → `llama_kv_cache_turboquant`
+  (new derived class) → `llama_jni.cpp` (`kvType=3`) → Settings UI
+  (fourth radio: *TurboQuant native — PolarQuant + 1-bit QJL*). Selecting
+  it today drives the new cache class which currently delegates to the
+  base unified cache; behaviour is FP16-equivalent.
+- ⏸ **P2.1 algorithm** — substituting K/V writes with `TurboQuantKVCache`
+  and replacing the `Q@K.T → softmax → attn@V` triple in
+  `llama-graph.cpp:1998-2042` with a `ggml_map_custom3` op that calls
+  `attention_scores()` + `attend()` from `cpp/include/turboquant/api.hpp`.
+  The integration shape is fixed; the algorithm lands in a follow-up
+  commit on `tq-main` without further plumbing churn.
+- ⏸ **P2.2 / P2.3** — Adreno on the TurboQuant hot path + paired A/B
+  bench in real chat are gated on the algorithm.
+
 Plus an installable Android app (`com.yzamari.turboquant`, 62 MB APK) with a
 Compose chat UI, voice in (SpeechRecognizer) / out (TextToSpeech), and 12
 Android-Intent tools (`set_alarm`, `sms`, `web_search`, `directions`, …).
