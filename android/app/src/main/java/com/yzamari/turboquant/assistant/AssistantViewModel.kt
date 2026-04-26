@@ -44,6 +44,7 @@ class AssistantViewModel(app: Application) : AndroidViewModel(app) {
     private var assistant: Assistant? = null
     private val dispatcher = ToolDispatcher(app.applicationContext)
     private val voice = Voice(app.applicationContext)
+    private val vlm   = VlmRunner(app.applicationContext)
     private var generationJob: Job? = null
 
     init {
@@ -189,6 +190,47 @@ class AssistantViewModel(app: Application) : AndroidViewModel(app) {
             generating = false
         }
     }
+
+    /**
+     * Describe a captured image via the on-device SmolVLM. The image is read
+     * from `imagePath` (a regular filesystem path the app has read access to).
+     * The result is appended to the chat as an assistant message.
+     */
+    fun describeImage(imagePath: String, prompt: String? = null) {
+        val userBubble = ChatEntry.User("📷 (sent an image to the assistant)")
+        val replyEntry = ChatEntry.AssistantMsg("Looking at the image…", streaming = true)
+        messages.add(userBubble)
+        messages.add(replyEntry)
+        generating = true
+        generationJob = viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    vlm.describe(
+                        imagePath,
+                        prompt ?: "Describe this image in one or two sentences.",
+                    )
+                }.onFailure { Log.e(TAG, "VLM failed", it) }
+                 .getOrElse { VlmRunner.Result(reply = "(VLM error: ${it.localizedMessage ?: it})", stats = "") }
+            }
+            withContext(Dispatchers.Main) {
+                val idx = messages.indexOf(replyEntry)
+                if (idx >= 0) {
+                    messages[idx] = ChatEntry.AssistantMsg(
+                        text = result.reply.trim().ifBlank { "(empty reply)" },
+                        streaming = false,
+                    )
+                }
+                if (result.stats.isNotBlank()) {
+                    statsJson = result.stats
+                }
+                if (ttsEnabled) voice.speak(result.reply)
+                generating = false
+            }
+        }
+    }
+
+    fun vlmAvailable(): Boolean = vlm.isAvailable()
+    fun vlmDiagnostic(): String = vlm.missingFilesMessage()
 
     fun resetConversation() {
         cancelGeneration()

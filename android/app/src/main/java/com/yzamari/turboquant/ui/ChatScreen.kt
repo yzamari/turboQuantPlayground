@@ -1,9 +1,14 @@
 package com.yzamari.turboquant.ui
 
 import android.Manifest
+import android.content.Context
 import android.content.pm.PackageManager
+import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.FileProvider
+import java.io.File
+import java.io.FileOutputStream
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -21,8 +26,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AddPhotoAlternate
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
+import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.VolumeOff
@@ -64,12 +72,38 @@ fun ChatScreen(vm: AssistantViewModel) {
     var input by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
 
+    // Pending image attachment. When non-null, the next Send routes to VLM.
+    var attachedImagePath by remember { mutableStateOf<String?>(null) }
+    var pendingCameraPath by remember { mutableStateOf<String?>(null) }
+    var showAttachMenu    by remember { mutableStateOf(false) }
+
     val micPermLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
         if (granted) {
             vm.startVoice { text -> input = text }
         }
+    }
+
+    val galleryLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            attachedImagePath = copyUriToCache(context, uri)
+        }
+    }
+
+    val cameraLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.TakePicture()
+    ) { success ->
+        if (success) attachedImagePath = pendingCameraPath
+        else pendingCameraPath = null
+    }
+
+    val cameraPermLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) launchCamera(context, cameraLauncher) { p -> pendingCameraPath = p }
     }
 
     fun toggleMic() {
@@ -83,11 +117,29 @@ fun ChatScreen(vm: AssistantViewModel) {
         }
     }
 
+    fun openCamera() {
+        val granted = ContextCompat.checkSelfPermission(
+            context, Manifest.permission.CAMERA
+        ) == PackageManager.PERMISSION_GRANTED
+        if (!granted) cameraPermLauncher.launch(Manifest.permission.CAMERA)
+        else launchCamera(context, cameraLauncher) { p -> pendingCameraPath = p }
+    }
+
     fun sendCurrent() {
-        if (input.isBlank() || vm.generating) return
+        if (vm.generating) return
         val text = input.trim()
-        input = ""
-        vm.send(text)
+        val img  = attachedImagePath
+        if (img != null) {
+            // Route to VLM (Vision-Language Model)
+            input = ""
+            attachedImagePath = null
+            val prompt = if (text.isNotBlank()) text else "Describe this image."
+            vm.describeImage(img, prompt)
+        } else if (text.isNotBlank()) {
+            // Route to LLM
+            input = ""
+            vm.send(text)
+        }
     }
 
     LaunchedEffect(vm.messages.size) {
@@ -168,6 +220,23 @@ fun ChatScreen(vm: AssistantViewModel) {
             }
         }
 
+        // If an image is attached, show a small chip above the input.
+        attachedImagePath?.let { path ->
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    "📷 image attached → will route to VLM (SmolVLM-256M)",
+                    style = MaterialTheme.typography.labelSmall,
+                    modifier = Modifier.weight(1f),
+                )
+                IconButton(onClick = { attachedImagePath = null }) {
+                    Icon(Icons.Filled.Close, contentDescription = "Remove image")
+                }
+            }
+        }
+
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -175,11 +244,42 @@ fun ChatScreen(vm: AssistantViewModel) {
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(4.dp),
         ) {
+            // Attach: pops a small chooser between Camera and Gallery.
+            Box {
+                FilledIconButton(
+                    onClick = { showAttachMenu = true },
+                    colors = IconButtonDefaults.filledIconButtonColors(
+                        containerColor = MaterialTheme.colorScheme.tertiaryContainer
+                    ),
+                ) {
+                    Icon(Icons.Filled.AddPhotoAlternate, contentDescription = "Attach image")
+                }
+                androidx.compose.material3.DropdownMenu(
+                    expanded = showAttachMenu,
+                    onDismissRequest = { showAttachMenu = false }
+                ) {
+                    androidx.compose.material3.DropdownMenuItem(
+                        text = { Text("Take photo") },
+                        leadingIcon = { Icon(Icons.Filled.PhotoCamera, contentDescription = null) },
+                        onClick = { showAttachMenu = false; openCamera() }
+                    )
+                    androidx.compose.material3.DropdownMenuItem(
+                        text = { Text("Pick from gallery") },
+                        leadingIcon = { Icon(Icons.Filled.AddPhotoAlternate, contentDescription = null) },
+                        onClick = { showAttachMenu = false; galleryLauncher.launch("image/*") }
+                    )
+                }
+            }
             OutlinedTextField(
                 value = input,
                 onValueChange = { input = it },
                 modifier = Modifier.weight(1f),
-                placeholder = { Text("Ask anything…") },
+                placeholder = {
+                    Text(
+                        if (attachedImagePath != null) "Add a question about the image (optional)…"
+                        else "Ask anything…"
+                    )
+                },
                 maxLines = 4,
                 keyboardOptions = KeyboardOptions.Default,
                 keyboardActions = KeyboardActions(onSend = { sendCurrent() }),
@@ -197,12 +297,39 @@ fun ChatScreen(vm: AssistantViewModel) {
             }
             FilledIconButton(
                 onClick = { sendCurrent() },
-                enabled = input.isNotBlank() && !vm.generating && vm.isModelReady(),
+                enabled = !vm.generating &&
+                          (attachedImagePath != null || (input.isNotBlank() && vm.isModelReady())),
             ) {
                 Icon(Icons.Filled.Send, contentDescription = "Send")
             }
         }
     }
+}
+
+// ---- Camera & gallery helpers ----------------------------------------------
+
+private fun launchCamera(
+    context: Context,
+    launcher: androidx.activity.result.ActivityResultLauncher<Uri>,
+    onPath: (String) -> Unit,
+) {
+    val dir = File(context.cacheDir, "images").apply { mkdirs() }
+    val file = File(dir, "shot_${System.currentTimeMillis()}.jpg")
+    val authority = "${context.packageName}.fileprovider"
+    val uri = FileProvider.getUriForFile(context, authority, file)
+    onPath(file.absolutePath)
+    launcher.launch(uri)
+}
+
+private fun copyUriToCache(context: Context, uri: Uri): String? {
+    return try {
+        val dir = File(context.cacheDir, "images").apply { mkdirs() }
+        val file = File(dir, "pick_${System.currentTimeMillis()}.jpg")
+        context.contentResolver.openInputStream(uri)?.use { input ->
+            FileOutputStream(file).use { out -> input.copyTo(out) }
+        }
+        file.absolutePath
+    } catch (_: Exception) { null }
 }
 
 @Composable
