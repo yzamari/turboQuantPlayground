@@ -1,0 +1,238 @@
+ggml_opencl: selected platform: 'QUALCOMM Snapdragon(TM)'
+
+ggml_opencl: device: 'QUALCOMM Adreno(TM) 750 (OpenCL 3.0 Adreno(TM) 750)'
+ggml_opencl: OpenCL driver: OpenCL 3.0 QUALCOMM build: 0762.39 Compiler E031.45.02.26
+ggml_opencl: vector subgroup broadcast support: false
+ggml_opencl: device FP16 support: true
+ggml_opencl: mem base addr align: 128
+ggml_opencl: max mem alloc size: 1024 MB
+ggml_opencl: device max image buffer size (pixels): 134217728
+ggml_opencl: device max workgroup size: 1024
+ggml_opencl: SVM coarse grain buffer support: true
+ggml_opencl: SVM fine grain buffer support: true
+ggml_opencl: SVM fine grain system support: false
+ggml_opencl: SVM atomics support: true
+ggml_opencl: flattening quantized weights representation as struct of arrays (GGML_OPENCL_SOA_Q)
+ggml_opencl: using kernels optimized for Adreno (GGML_OPENCL_USE_ADRENO_KERNELS)
+ggml_opencl: loading OpenCL kernels.................................................................................................................
+ggml_opencl: default device: 'QUALCOMM Adreno(TM) 750 (OpenCL 3.0 Adreno(TM) 750)'
+common_init_result: fitting params to device memory, for bugs during this step try to reproduce them with -fit off, or provide --verbose logs if the bug only occurs with -fit on
+common_params_fit_impl: getting device memory data for initial parameters:
+common_memory_breakdown_print: | memory breakdown [MiB]                  | total   free    self   model   context   compute       unaccounted |
+common_memory_breakdown_print: |   - GPUOpenCL (QUALCOMM Adreno(TM) 750) |     0 =    0 + ( 423 =   136 +     180 +     107) + 17592186043992 |
+common_memory_breakdown_print: |   - Host                                |                   47 =    28 +       0 +      18                   |
+common_params_fit_impl: projected to use 423 MiB of device memory vs. 11085 MiB of free device memory
+common_params_fit_impl: will leave 10661 >= 1024 MiB of free device memory, no changes needed
+common_fit_params: successfully fit params to free device memory
+common_fit_params: fitting params to free memory took 0.10 seconds
+llama_model_load_from_file_impl: using device GPUOpenCL (QUALCOMM Adreno(TM) 750) (unknown id) - 0 MiB free
+llama_model_loader: loaded meta data with 49 key-value pairs and 273 tensors from /sdcard/Android/data/com.yzamari.turboquant/files/SmolVLM-256M-Instruct-Q8_0.gguf (version GGUF V3 (latest))
+llama_model_loader: Dumping metadata keys/values. Note: KV overrides do not apply in this output.
+llama_model_loader: - kv   0:                       general.architecture str              = llama
+llama_model_loader: - kv   1:                               general.type str              = model
+llama_model_loader: - kv   2:                               general.name str              = SmolVLM 256M Instruct
+llama_model_loader: - kv   3:                           general.finetune str              = Instruct
+llama_model_loader: - kv   4:                           general.basename str              = SmolVLM
+llama_model_loader: - kv   5:                         general.size_label str              = 256M
+llama_model_loader: - kv   6:                            general.license str              = apache-2.0
+llama_model_loader: - kv   7:                   general.base_model.count u32              = 2
+llama_model_loader: - kv   8:                  general.base_model.0.name str              = SmolLM2 135M Instruct
+llama_model_loader: - kv   9:          general.base_model.0.organization str              = HuggingFaceTB
+llama_model_loader: - kv  10:              general.base_model.0.repo_url str              = https://huggingface.co/HuggingFaceTB/...
+llama_model_loader: - kv  11:                  general.base_model.1.name str              = Siglip Base Patch16 512
+llama_model_loader: - kv  12:               general.base_model.1.version str              = 512
+llama_model_loader: - kv  13:          general.base_model.1.organization str              = Google
+llama_model_loader: - kv  14:              general.base_model.1.repo_url str              = https://huggingface.co/google/siglip-...
+llama_model_loader: - kv  15:                      general.dataset.count u32              = 2
+llama_model_loader: - kv  16:                     general.dataset.0.name str              = The_Cauldron
+llama_model_loader: - kv  17:             general.dataset.0.organization str              = HuggingFaceM4
+llama_model_loader: - kv  18:                 general.dataset.0.repo_url str              = https://huggingface.co/HuggingFaceM4/...
+llama_model_loader: - kv  19:                     general.dataset.1.name str              = Docmatix
+llama_model_loader: - kv  20:             general.dataset.1.organization str              = HuggingFaceM4
+llama_model_loader: - kv  21:                 general.dataset.1.repo_url str              = https://huggingface.co/HuggingFaceM4/...
+llama_model_loader: - kv  22:                               general.tags arr[str,1]       = ["image-text-to-text"]
+llama_model_loader: - kv  23:                          general.languages arr[str,1]       = ["en"]
+llama_model_loader: - kv  24:                          llama.block_count u32              = 30
+llama_model_loader: - kv  25:                       llama.context_length u32              = 8192
+llama_model_loader: - kv  26:                     llama.embedding_length u32              = 576
+llama_model_loader: - kv  27:                  llama.feed_forward_length u32              = 1536
+llama_model_loader: - kv  28:                 llama.attention.head_count u32              = 9
+llama_model_loader: - kv  29:              llama.attention.head_count_kv u32              = 3
+llama_model_loader: - kv  30:                       llama.rope.freq_base f32              = 100000.000000
+llama_model_loader: - kv  31:     llama.attention.layer_norm_rms_epsilon f32              = 0.000010
+llama_model_loader: - kv  32:                 llama.attention.key_length u32              = 64
+llama_model_loader: - kv  33:               llama.attention.value_length u32              = 64
+llama_model_loader: - kv  34:                           llama.vocab_size u32              = 49280
+llama_model_loader: - kv  35:                 llama.rope.dimension_count u32              = 64
+llama_model_loader: - kv  36:                       tokenizer.ggml.model str              = gpt2
+llama_model_loader: - kv  37:                         tokenizer.ggml.pre str              = smollm
+llama_model_loader: - kv  38:                      tokenizer.ggml.tokens arr[str,49280]   = ["<|endoftext|>", "<|im_start|>", "<|...
+llama_model_loader: - kv  39:                  tokenizer.ggml.token_type arr[i32,49280]   = [3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, ...
+llama_model_loader: - kv  40:                      tokenizer.ggml.merges arr[str,48900]   = ["Ġ t", "Ġ a", "i n", "h e", "Ġ Ġ...
+llama_model_loader: - kv  41:                tokenizer.ggml.bos_token_id u32              = 1
+llama_model_loader: - kv  42:                tokenizer.ggml.eos_token_id u32              = 49279
+llama_model_loader: - kv  43:            tokenizer.ggml.unknown_token_id u32              = 0
+llama_model_loader: - kv  44:            tokenizer.ggml.padding_token_id u32              = 2
+llama_model_loader: - kv  45:                    tokenizer.chat_template str              = <|im_start|>{% for message in message...
+llama_model_loader: - kv  46:            tokenizer.ggml.add_space_prefix bool             = false
+llama_model_loader: - kv  47:               general.quantization_version u32              = 2
+llama_model_loader: - kv  48:                          general.file_type u32              = 7
+llama_model_loader: - type  f32:   61 tensors
+llama_model_loader: - type q8_0:  212 tensors
+print_info: file format = GGUF V3 (latest)
+print_info: file type   = Q8_0
+print_info: file size   = 165.24 MiB (8.51 BPW) 
+load: 0 unused tokens
+load: printing all EOG tokens:
+load:   - 0 ('<|endoftext|>')
+load:   - 2 ('<|im_end|>')
+load:   - 4 ('<reponame>')
+load:   - 49279 ('<end_of_utterance>')
+load: special tokens cache size = 145
+load: token to piece cache size = 0.3199 MB
+print_info: arch                  = llama
+print_info: vocab_only            = 0
+print_info: no_alloc              = 0
+print_info: n_ctx_train           = 8192
+print_info: n_embd                = 576
+print_info: n_embd_inp            = 576
+print_info: n_layer               = 30
+print_info: n_head                = 9
+print_info: n_head_kv             = 3
+print_info: n_rot                 = 64
+print_info: n_swa                 = 0
+print_info: is_swa_any            = 0
+print_info: n_embd_head_k         = 64
+print_info: n_embd_head_v         = 64
+print_info: n_gqa                 = 3
+print_info: n_embd_k_gqa          = 192
+print_info: n_embd_v_gqa          = 192
+print_info: f_norm_eps            = 0.0e+00
+print_info: f_norm_rms_eps        = 1.0e-05
+print_info: f_clamp_kqv           = 0.0e+00
+print_info: f_max_alibi_bias      = 0.0e+00
+print_info: f_logit_scale         = 0.0e+00
+print_info: f_attn_scale          = 0.0e+00
+print_info: n_ff                  = 1536
+print_info: n_expert              = 0
+print_info: n_expert_used         = 0
+print_info: n_expert_groups       = 0
+print_info: n_group_used          = 0
+print_info: causal attn           = 1
+print_info: pooling type          = -1
+print_info: rope type             = 0
+print_info: rope scaling          = linear
+print_info: freq_base_train       = 100000.0
+print_info: freq_scale_train      = 1
+print_info: n_ctx_orig_yarn       = 8192
+print_info: rope_yarn_log_mul     = 0.0000
+print_info: rope_finetuned        = unknown
+print_info: model type            = 256M
+print_info: model params          = 162.97 M
+print_info: general.name          = SmolVLM 256M Instruct
+print_info: vocab type            = BPE
+print_info: n_vocab               = 49280
+print_info: n_merges              = 48900
+print_info: BOS token             = 1 '<|im_start|>'
+print_info: EOS token             = 49279 '<end_of_utterance>'
+print_info: EOT token             = 49279 '<end_of_utterance>'
+print_info: UNK token             = 0 '<|endoftext|>'
+print_info: PAD token             = 2 '<|im_end|>'
+print_info: LF token              = 198 'Ċ'
+print_info: FIM REP token         = 4 '<reponame>'
+print_info: EOG token             = 0 '<|endoftext|>'
+print_info: EOG token             = 2 '<|im_end|>'
+print_info: EOG token             = 4 '<reponame>'
+print_info: EOG token             = 49279 '<end_of_utterance>'
+print_info: max token length      = 162
+load_tensors: loading model tensors, this can take a while... (mmap = true, direct_io = false)
+load_tensors: offloading output layer to GPU
+load_tensors: offloading 29 repeating layers to GPU
+load_tensors: offloaded 31/31 layers to GPU
+load_tensors:   CPU_Mapped model buffer size =    28.76 MiB
+load_tensors:       OpenCL model buffer size =   136.47 MiB
+....................................................................
+common_init_result: added <|endoftext|> logit bias = -inf
+common_init_result: added <|im_end|> logit bias = -inf
+common_init_result: added <reponame> logit bias = -inf
+common_init_result: added <end_of_utterance> logit bias = -inf
+llama_context: constructing llama_context
+llama_context: n_seq_max     = 1
+llama_context: n_ctx         = 8192
+llama_context: n_ctx_seq     = 8192
+llama_context: n_batch       = 2048
+llama_context: n_ubatch      = 512
+llama_context: causal_attn   = 1
+llama_context: flash_attn    = auto
+llama_context: kv_unified    = false
+llama_context: freq_base     = 100000.0
+llama_context: freq_scale    = 1
+llama_context:        CPU  output buffer size =     0.19 MiB
+llama_kv_cache:     OpenCL KV buffer size =   180.00 MiB
+llama_kv_cache: size =  180.00 MiB (  8192 cells,  30 layers,  1/1 seqs), K (f16):   90.00 MiB, V (f16):   90.00 MiB
+llama_kv_cache: attn_rot_k = 0, n_embd_head_k_all = 64
+llama_kv_cache: attn_rot_v = 0, n_embd_head_k_all = 64
+sched_reserve: reserving ...
+sched_reserve: Flash Attention was auto, set to enabled
+sched_reserve: resolving fused Gated Delta Net support:
+sched_reserve: fused Gated Delta Net (autoregressive) enabled
+sched_reserve: fused Gated Delta Net (chunked) enabled
+sched_reserve:     OpenCL compute buffer size =   107.50 MiB
+sched_reserve:        CPU compute buffer size =    18.26 MiB
+sched_reserve: graph nodes  = 937
+sched_reserve: graph splits = 2
+sched_reserve: reserve took 59.31 ms, sched copies = 1
+mtmd_cli_context: chat template example:
+<|im_start|>You are a helpful assistant
+
+User: Hello<end_of_utterance>
+Assistant: Hi there<end_of_utterance>
+User: How are you?<end_of_utterance>
+Assistant:
+clip_model_loader: model name:   SmolVLM 256M Instruct
+clip_model_loader: description:  
+clip_model_loader: GGUF version: 3
+clip_model_loader: alignment:    32
+clip_model_loader: n_tensors:    198
+clip_model_loader: n_kv:         40
+
+clip_model_loader: has vision encoder
+clip_ctx: CLIP using OpenCL backend
+load_hparams: projector:          idefics3
+load_hparams: n_embd:             768
+load_hparams: n_head:             12
+load_hparams: n_ff:               3072
+load_hparams: n_layer:            12
+load_hparams: ffn_op:             gelu
+load_hparams: projection_dim:     576
+
+--- vision hparams ---
+load_hparams: image_size:         512
+load_hparams: patch_size:         16
+load_hparams: has_llava_proj:     0
+load_hparams: minicpmv_version:   0
+load_hparams: n_merge:            4
+load_hparams: n_wa_pattern: 0
+
+load_hparams: model size:         98.95 MiB
+load_hparams: metadata size:      0.07 MiB
+load_tensors: ffn up/down are swapped
+main: loading model: /sdcard/Android/data/com.yzamari.turboquant/files/SmolVLM-256M-Instruct-Q8_0.gguf
+WARN: This is an experimental CLI for testing multimodal capability.
+      For normal use cases, please use the standard llama-cli
+encoding image slice...
+alloc_compute_meta:     OpenCL compute buffer size =    21.00 MiB
+alloc_compute_meta:        CPU compute buffer size =     3.00 MiB
+alloc_compute_meta: graph splits = 1, nodes = 394
+warmup: flash attention is enabled
+image slice encoded in 444 ms
+decoding image batch 1/1, n_tokens_batch = 64
+image decoded (batch 1/1) in 11 ms
+
+ The image depicts a large, colorful mural or poster, likely intended for a public event or event. The mural is predominantly in the color of red, with a mix of green and yellow elements, giving it a vibrant and energetic appearance. The background of the mural is a gradient of red and yellow,
+
+llama_perf_context_print:        load time =    2884.20 ms
+llama_perf_context_print: prompt eval time =     574.02 ms /    81 tokens (    7.09 ms per token,   141.11 tokens per second)
+llama_perf_context_print:        eval time =     511.66 ms /    59 runs   (    8.67 ms per token,   115.31 tokens per second)
+llama_perf_context_print:       total time =    3412.29 ms /   140 tokens
+llama_perf_context_print:    graphs reused =         59

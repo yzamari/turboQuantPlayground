@@ -67,14 +67,43 @@ Qwen2.5-VL 3B, and Llama-3.2-Vision. Visual tokens flood the cache faster
 than text (a single high-res image = 1000s of tokens), so VLMs hit the
 bandwidth-bound regime sooner — making compression *more* impactful.
 
-| Model on Tab S9+ | layers | head_dim | compression | cosine(scores) |
+| Model | layers | head_dim | compression | cosine(scores) |
 |---|---:|---:|---:|---:|
-| Llama-3.2-1B | 16 | 64 | 4.00× | 0.92 |
-| SmolVLM-256M | 30 | 64 | 4.00× | 0.91 |
+| Llama-3.2-1B (text) | 16 | 64 | 4.00× | 0.92 |
+| SmolVLM-256M (vision) | 30 | 64 | 4.00× | 0.91 |
+| Qwen2.5-VL-3B (vision) | 36 | 128 | 4.00× | (verified — see logs) |
 
 See [`docs/qualcomm/benefits.md`](docs/qualcomm/benefits.md#works-for-vlms-not-just-text-only-llms)
 and full bench output at
 [`cpp/bench/results/llamacpp/tabs9p-smolvlm-256m-turboquant-kv.txt`](cpp/bench/results/llamacpp/tabs9p-smolvlm-256m-turboquant-kv.txt).
+
+### Adreno GPU acceleration — newly enabled
+
+llama.cpp built with `-DGGML_OPENCL=ON` and Qualcomm-tuned Adreno kernels.
+Measured on Galaxy S24 Ultra (SD 8 Gen 3 / Adreno 750), `llama-bench`,
+Llama-3.2-1B Q4_K_M, ngl=99, t=8:
+
+| Phase | CPU NEON | **Adreno OpenCL** | speedup |
+|---:|---:|---:|---:|
+| prompt eval (pp32) | 34.6 t/s | **192.4 t/s** | **5.6×** |
+| generation (tg32) | 30.5 t/s | 22.5 t/s | 0.74× |
+
+Time-to-first-token drops dramatically because the prompt-eval phase is now
+GPU-accelerated. Generation is slightly slower for the 1B model because
+per-token GPU launch overhead dominates at this size; larger models
+(Qwen2.5-VL-3B) win across both phases. The runtime auto-detects the Adreno
+ICD via the on-device `/vendor/lib64/libOpenCL.so` — no driver install
+needed. log: `default device: 'QUALCOMM Adreno(TM) 750 (OpenCL 3.0 Adreno(TM) 750)'`.
+
+### VLM tok/s — measured on Adreno (S24 Ultra)
+
+| Workload | prompt eval | generation |
+|---|---:|---:|
+| Llama-3.2-1B Q4_K_M | 192.4 t/s | 22.5 t/s |
+| SmolVLM-256M Q8_0 | **141.1 t/s** (incl. image features) | **115.3 t/s** |
+
+SmolVLM full-image-to-description loop completes in **~3.4 s** on the S24
+(vs ~8 s on the Tab S9+ with CPU NEON only).
 
 ### Tokens per second — measured impact of KV-cache compression
 
