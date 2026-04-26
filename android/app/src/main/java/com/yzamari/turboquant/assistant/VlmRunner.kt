@@ -28,28 +28,50 @@ import java.util.concurrent.TimeUnit
  */
 class VlmRunner(private val ctx: Context) {
 
+    /** Selectable VLM models. Each entry maps to a (gguf, mmproj) pair sitting
+     *  in the app's external files dir. */
+    enum class Model(val displayName: String, val modelFile: String, val mmprojFile: String) {
+        SMOLVLM_256M(
+            "SmolVLM-256M (small / English-leaning)",
+            "SmolVLM-256M-Instruct-Q8_0.gguf",
+            "mmproj-SmolVLM-256M-Instruct-Q8_0.gguf",
+        ),
+        QWEN25_VL_3B(
+            "Qwen2.5-VL-3B (multilingual / much better quality)",
+            "Qwen2.5-VL-3B-Instruct-Q4_K_M.gguf",
+            "mmproj-Qwen2.5-VL-3B-Instruct-Q8_0.gguf",
+        );
+    }
+
+    /** Currently-selected VLM model. Mutable so Settings can change it live. */
+    @Volatile
+    var activeModel: Model = Model.SMOLVLM_256M
+
     private val nativeDir = ctx.applicationInfo.nativeLibraryDir
     private val mtmdBin   = "$nativeDir/libllama-mtmd-cli.so"
 
-    fun isAvailable(): Boolean {
+    fun isAvailable(model: Model = activeModel): Boolean {
         val bin = File(mtmdBin)
         if (!bin.exists() || !bin.canExecute()) return false
         val files = ctx.getExternalFilesDir(null) ?: return false
-        return File(files, MODEL_FILE).exists() && File(files, MMPROJ_FILE).exists()
+        return File(files, model.modelFile).exists() && File(files, model.mmprojFile).exists()
     }
 
-    fun missingFilesMessage(): String {
+    /** All models that have their .gguf + mmproj on disk right now. */
+    fun availableModels(): List<Model> = Model.values().filter { isAvailable(it) }
+
+    fun missingFilesMessage(model: Model = activeModel): String {
         val files = ctx.getExternalFilesDir(null)?.absolutePath ?: "<no external files dir>"
         val sb = StringBuilder()
         if (!File(mtmdBin).exists()) sb.appendLine("• vision binary missing at $mtmdBin")
         if (files != "<no external files dir>") {
-            if (!File(files, MODEL_FILE).exists())  sb.appendLine("• missing $MODEL_FILE in $files")
-            if (!File(files, MMPROJ_FILE).exists()) sb.appendLine("• missing $MMPROJ_FILE in $files")
+            if (!File(files, model.modelFile).exists())  sb.appendLine("• missing ${model.modelFile} in $files")
+            if (!File(files, model.mmprojFile).exists()) sb.appendLine("• missing ${model.mmprojFile} in $files")
         }
         sb.appendLine()
         sb.appendLine("Push from host:")
-        sb.appendLine("  adb push <path>/$MODEL_FILE $files/")
-        sb.appendLine("  adb push <path>/$MMPROJ_FILE $files/")
+        sb.appendLine("  adb push <path>/${model.modelFile} $files/")
+        sb.appendLine("  adb push <path>/${model.mmprojFile} $files/")
         return sb.toString().trim()
     }
 
@@ -67,10 +89,11 @@ class VlmRunner(private val ctx: Context) {
         val startMs = System.currentTimeMillis()
         val filesDir = ctx.getExternalFilesDir(null)
             ?: return@withContext Result("External files dir not accessible.", "")
-        val model  = File(filesDir, MODEL_FILE)
-        val mmproj = File(filesDir, MMPROJ_FILE)
+        val sel    = activeModel
+        val model  = File(filesDir, sel.modelFile)
+        val mmproj = File(filesDir, sel.mmprojFile)
         if (!model.exists() || !mmproj.exists() || !File(mtmdBin).exists()) {
-            return@withContext Result(missingFilesMessage(), "")
+            return@withContext Result(missingFilesMessage(sel), "")
         }
 
         val cmd = arrayOf(
@@ -128,9 +151,14 @@ class VlmRunner(private val ctx: Context) {
             }
         }.apply { isDaemon = true; start() }
 
-        if (!proc.waitFor(180, TimeUnit.SECONDS)) {
+        // Larger VLMs (Qwen2.5-VL-3B) need more time on CPU than SmolVLM.
+        val timeoutSec = when (activeModel) {
+            Model.SMOLVLM_256M -> 180L
+            Model.QWEN25_VL_3B -> 900L  // 15 min — first vision-encode on CPU is slow
+        }
+        if (!proc.waitFor(timeoutSec, TimeUnit.SECONDS)) {
             proc.destroyForcibly()
-            return@withContext Result(reply = "(VLM timed out after 180s)", stats = "")
+            return@withContext Result(reply = "(VLM timed out after ${timeoutSec}s)", stats = "")
         }
         readerThread.join(3000)
         val stdout = stdoutBuf.toString()
@@ -160,11 +188,15 @@ class VlmRunner(private val ctx: Context) {
         } else null to null
         val elapsedMs = System.currentTimeMillis() - startMs
         val elapsedSec = elapsedMs / 1000.0
+        val modelLabel = when (activeModel) {
+            Model.SMOLVLM_256M -> "SmolVLM-256M"
+            Model.QWEN25_VL_3B -> "Qwen2.5-VL-3B"
+        }
         val stats = buildString {
             append("⏱ ${"%.1f".format(elapsedSec)}s")
             if (gen != null) append(" · gen ${"%.1f".format(gen)} tok/s")
             if (pp  != null) append(" · prompt ${"%.1f".format(pp)} tok/s")
-            append(" · SmolVLM-256M")
+            append(" · $modelLabel")
         }
 
         Result(
@@ -174,8 +206,6 @@ class VlmRunner(private val ctx: Context) {
     }
 
     companion object {
-        private const val TAG         = "VlmRunner"
-        private const val MODEL_FILE  = "SmolVLM-256M-Instruct-Q8_0.gguf"
-        private const val MMPROJ_FILE = "mmproj-SmolVLM-256M-Instruct-Q8_0.gguf"
+        private const val TAG = "VlmRunner"
     }
 }

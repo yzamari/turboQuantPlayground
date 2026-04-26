@@ -56,7 +56,25 @@ class AssistantViewModel(app: Application) : AndroidViewModel(app) {
     private val dispatcher = ToolDispatcher(app.applicationContext)
     private val voice = Voice(app.applicationContext)
     private val vlm   = VlmRunner(app.applicationContext)
+    private val tqv   = TurboQuantVerifier(app.applicationContext)
     private var generationJob: Job? = null
+
+    /** Latest TurboQuant verification output (set by `verifyTurboQuant`). */
+    var turboQuantStatus by mutableStateOf("")
+        private set
+
+    fun isTurboQuantAvailable(): Boolean = tqv.isAvailable()
+
+    fun verifyTurboQuant() {
+        val modelPath = findModelPath() ?: return run {
+            turboQuantStatus = "No model on disk to verify against."
+        }
+        turboQuantStatus = "Running…"
+        viewModelScope.launch {
+            val out = tqv.verify(modelPath)
+            withContext(Dispatchers.Main) { turboQuantStatus = out }
+        }
+    }
 
     init {
         voice.initTts()
@@ -273,7 +291,8 @@ class AssistantViewModel(app: Application) : AndroidViewModel(app) {
                     messages[slotIndex] = ChatEntry.AssistantMsg(
                         text = result.reply.trim().ifBlank { "(empty reply)" },
                         streaming = false,
-                        timing = "⏱ ${"%.1f".format(elapsedMs / 1000.0)}s · SmolVLM-256M",
+                        timing = "⏱ ${"%.1f".format(elapsedMs / 1000.0)}s · " +
+                                 vlm.activeModel.displayName.substringBefore(" ("),
                         ctxLeft = result.stats.takeIf { it.isNotBlank() },
                     )
                 }
@@ -288,6 +307,13 @@ class AssistantViewModel(app: Application) : AndroidViewModel(app) {
 
     fun vlmAvailable(): Boolean = vlm.isAvailable()
     fun vlmDiagnostic(): String = vlm.missingFilesMessage()
+
+    fun availableVlmModels(): List<VlmRunner.Model> = vlm.availableModels()
+    fun activeVlmModel(): VlmRunner.Model = vlm.activeModel
+    fun setActiveVlmModel(m: VlmRunner.Model) {
+        vlm.activeModel = m
+        messages.add(ChatEntry.System("Vision model switched to ${m.displayName}"))
+    }
 
     fun resetConversation() {
         cancelGeneration()

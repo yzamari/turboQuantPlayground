@@ -173,7 +173,9 @@ fun ChatScreen(vm: AssistantViewModel) {
                     )
                     Text(
                         if (vm.isModelReady())
-                            "on-device · Llama-3.2-1B (text) · SmolVLM-256M (vision)"
+                            "on-device · Llama-3.2-1B (text) · " +
+                                vm.activeVlmModel().displayName.substringBefore(" (") +
+                                " (vision)"
                         else
                             "no model loaded — open Settings to load Llama-3.2-1B",
                         style = MaterialTheme.typography.bodySmall,

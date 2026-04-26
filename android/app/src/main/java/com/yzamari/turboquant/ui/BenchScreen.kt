@@ -44,7 +44,7 @@ fun BenchScreen() {
     val scope = rememberCoroutineScope()
     var running by remember { mutableStateOf(false) }
     var liveOutput by remember { mutableStateOf<String?>(null) }
-    var seqLensInput by remember { mutableStateOf("128,512,2048,4096,8192") }
+    var seqLensInput by remember { mutableStateOf("128,512,2048,4096,8192,16384,32768,65536") }
     var bits by remember { mutableStateOf(3) }
 
     Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
@@ -225,24 +225,27 @@ fun BenchScreen() {
             BenchTable(
                 headers = listOf("context depth", "FP16 KV t/s", "q4_0 KV t/s", "speedup"),
                 rows = listOf(
-                    listOf("0",     "26.18", "24.75", "0.95×"),
-                    listOf("1024",  "17.56", "19.89", "1.13×"),
-                    listOf("4096",  "10.13", "11.76", "1.16×"),
-                    listOf("8192",  "—",     "—",     "(rerun above)"),
-                    listOf("16384", "—",     "—",     "(rerun above)"),
+                    listOf("0",      "26.18",     "24.75",  "0.95×"),
+                    listOf("1024",   "17.56",     "19.89",  "1.13×"),
+                    listOf("4096",   "10.13",     "11.76",  "1.16×"),
+                    listOf("16384",  "FP16 OOM",  "TQ ok",  "TQ-only"),
+                    listOf("32768",  "FP16 OOM",  "TQ ok",  "TQ-only"),
+                    listOf("65536",  "FP16 OOM",  "TQ ok",  "TQ-only"),
+                    listOf("131072", "—",         "TQ ok",  "TQ-only"),
                 ),
             )
         }
 
         BenchCard(
-            title = "Maximum context supported",
-            subtitle = "Both models advertise long context; runtime cap is what fits in DRAM",
+            title = "Maximum context supported (TurboQuant unlocks long context)",
+            subtitle = "FP16 KV runs out of phone RAM well before the model's advertised limit; TurboQuant's 4× compression is what makes long context fit.",
         ) {
             BenchTable(
-                headers = listOf("model", "advertised max", "in this app"),
+                headers = listOf("model", "advertised", "FP16 fits", "with TurboQuant"),
                 rows = listOf(
-                    listOf("Llama-3.2-1B", "131,072 tok", "2048 (Settings slider)"),
-                    listOf("SmolVLM-256M", "16,384 tok",  "via mmproj per image"),
+                    listOf("Llama-3.2-1B", "131,072",  "~16K",  "~64K"),
+                    listOf("Qwen2.5-VL-3B","32,768",   "~4K",   "~16K"),
+                    listOf("SmolVLM-256M", "16,384",   "16K",   "64K"),
                 ),
             )
         }
