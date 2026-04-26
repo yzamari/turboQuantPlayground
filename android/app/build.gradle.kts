@@ -28,11 +28,6 @@ android {
 
         externalNativeBuild {
             cmake {
-                // Path 2 toggle: -PbuildLlamaFromSource=true to build llama.cpp
-                // from external/llama.cpp/ instead of importing prebuilt libs.
-                val buildLlamaFromSource =
-                    (project.findProperty("buildLlamaFromSource") as? String)?.toBoolean() ?: false
-
                 arguments += listOf(
                     "-DANDROID_STL=c++_static",
                     "-DANDROID_ARM_NEON=ON",
@@ -43,7 +38,6 @@ android {
                     "-DTQ_WITH_OPENCL=OFF",
                     "-DTQ_WITH_VULKAN=OFF",
                     "-DTQ_WITH_QNN=OFF",
-                    "-DBUILD_LLAMA_FROM_SOURCE=${if (buildLlamaFromSource) "ON" else "OFF"}",
                 )
                 // Note: exceptions/rtti must be enabled because the cpp/ core
                 // throws std::invalid_argument from kv_cache.cpp & quantizer.cpp.
@@ -80,17 +74,6 @@ android {
 
     kotlinOptions {
         jvmTarget = "17"
-    }
-
-    // Add the prebuilt llama+ggml libs to the jniLibs sources only when the
-    // toggle is OFF — when ON, those libraries come from CMake's build dir
-    // and would collide with the prebuilts during native-libs merge.
-    val buildLlamaFromSource =
-        (project.findProperty("buildLlamaFromSource") as? String)?.toBoolean() ?: false
-    if (!buildLlamaFromSource) {
-        sourceSets.getByName("main") {
-            jniLibs.srcDir("src/main/jniLibs-prebuilt")
-        }
     }
 
     packaging {
