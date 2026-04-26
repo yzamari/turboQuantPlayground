@@ -111,17 +111,14 @@ class VlmRunner(private val ctx: Context) {
             val mmprojPath = File(files, sel.mmprojFile).absolutePath
             Log.i(TAG, "loading native VLM session: ${sel.displayName}")
             val tLoadStart = System.currentTimeMillis()
-            // Defaults: 4 K context, FP16 KV.
-            //
-            // gpuLayers=0 (CPU-only LLM) — the Adreno OpenCL backend hangs
-            // mid-decode in `llama_decode` when paired with the mtmd vision
-            // pipeline on this llama.cpp pin (same hang documented for the
-            // chat path q4_0+Adreno+mtmd-cli combo). SmolVLM-256M is small
-            // enough that CPU at 4 threads still produces ~50 tok/s, so a
-            // 60-token caption finishes in ~1.2 s — keeping the live tab's
-            // ~1 FPS budget on Tab S9+ / S24 Ultra. The chat path under
-            // `Assistant` keeps its own gpuLayers picker; it doesn't go
-            // through here.
+            // Live VLM on Tab S9+ — pure CPU (gpuLayers=0, FP16 KV).
+            // Bisected the eval_chunks hang on 2026-04-26: any Adreno
+            // backend (LLM-side OR SigLIP-side) deadlocks
+            // mtmd_helper_eval_chunks on Tab S9+ (SD 8 Gen 2, Adreno 740)
+            // with this llama.cpp pin. Pure CPU completes correctly.
+            // SmolVLM-256M on 4 CPU threads is ~30 tok/s, so a 60-token
+            // caption finishes in ~2 s — the live tab still gets ~0.5 FPS,
+            // works in airplane mode, no Adreno hang.
             nativeHandle = MtmdNative.loadModel(
                 modelPath  = modelPath,
                 mmprojPath = mmprojPath,

@@ -113,7 +113,10 @@ fun LiveCameraScreen(vm: AssistantViewModel) {
     var lastDecodeTps  by remember { mutableStateOf(0f) }
     var framesAnalyzed by remember { mutableStateOf(0) }
     var paused         by remember { mutableStateOf(false) }
-    var useFrontCam    by remember { mutableStateOf(false) }
+    // Default to front camera so the user sees themselves the moment they
+    // tap Live — works as an immediate self-test ("describe me") without
+    // needing to flip the device. Switch button still works.
+    var useFrontCam    by remember { mutableStateOf(true) }
 
     if (!hasCameraPermission) {
         Box(
