@@ -59,6 +59,9 @@ class AssistantViewModel(app: Application) : AndroidViewModel(app) {
     private val dispatcher = ToolDispatcher(app.applicationContext)
     private val voice = Voice(app.applicationContext)
     private val vlm   = VlmRunner(app.applicationContext)
+    /** Public accessor used by [LiveCameraScreen] to push frames through
+     *  the same persistent VLM session the chat path uses. */
+    val vlmRunner: VlmRunner get() = vlm
     private val tqv   = TurboQuantVerifier(app.applicationContext)
     private var generationJob: Job? = null
 

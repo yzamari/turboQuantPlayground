@@ -6,6 +6,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Chat
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Speed
+import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
@@ -23,10 +24,12 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.yzamari.turboquant.assistant.AssistantViewModel
 import com.yzamari.turboquant.ui.BenchScreen
 import com.yzamari.turboquant.ui.ChatScreen
+import com.yzamari.turboquant.ui.LiveCameraScreen
 import com.yzamari.turboquant.ui.SettingsScreen
 
 private enum class Tab(val label: String) {
     Chat("Assistant"),
+    Live("Live"),
     Bench("Bench"),
     Settings("Settings"),
 }
@@ -47,6 +50,7 @@ fun App() {
                         icon     = {
                             val icon = when (tab) {
                                 Tab.Chat     -> Icons.Filled.Chat
+                                Tab.Live     -> Icons.Filled.Videocam
                                 Tab.Bench    -> Icons.Filled.Speed
                                 Tab.Settings -> Icons.Filled.Settings
                             }
@@ -61,6 +65,7 @@ fun App() {
         Box(modifier = Modifier.padding(padding)) {
             when (current) {
                 Tab.Chat     -> ChatScreen(vm)
+                Tab.Live     -> LiveCameraScreen(vm)
                 Tab.Bench    -> BenchScreen()
                 Tab.Settings -> SettingsScreen(vm)
             }
