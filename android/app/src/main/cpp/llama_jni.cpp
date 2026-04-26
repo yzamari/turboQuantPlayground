@@ -16,6 +16,8 @@
 #include "ggml.h"
 #include "ggml-backend.h"
 
+#include "turboquant/api.hpp"
+
 #include <android/log.h>
 
 #include <atomic>
@@ -51,6 +53,17 @@ struct Session {
     std::mutex      mu;     // guards generation / stats
 };
 
+// Thunk for the TurboQuant attention provider hook (P2.1c Step 4). Bound at
+// init_backends_once() time to llama_set_turboquant_attn_fn(). The fork's
+// custom ggml op (ggml-custom-turboquant.c) calls this when kvType=3 builds
+// a llama_kv_cache_turboquant cache and flash-attn is off.
+extern "C" void tq_attn_thunk(
+    const float * q, const float * k, const float * v,
+    int BH, int n_q, int n_kv, int D,
+    float scale, const float * mask, float * out) {
+    turboquant::attention_turboquant(q, k, v, BH, n_q, n_kv, D, scale, mask, out);
+}
+
 // Single global flag — the first loadModel call performs ggml backend init.
 std::atomic<bool> g_backend_inited{false};
 std::mutex        g_backend_init_mu;
@@ -65,7 +78,8 @@ void init_backends_once() {
         }
     }, nullptr);
     ggml_backend_load_all();
-    LOGI("ggml backends loaded");
+    llama_set_turboquant_attn_fn(tq_attn_thunk);
+    LOGI("ggml backends loaded; turboquant attention provider registered");
     g_backend_inited.store(true, std::memory_order_release);
 }
 
@@ -160,16 +174,14 @@ Java_com_yzamari_turboquant_assistant_LlamaNative_loadModel(
             LOGI("loadModel: KV cache = q8_0 (2× compressed, +flash attn)");
             break;
         case 3:
-            // Path 2: route the KV cache through TurboQuant. The model factory
-            // in our llama.cpp fork detects this flag and instantiates
-            // llama_kv_cache_turboquant. P2.1 scaffold lands the plumbing —
-            // the algorithmic K/V substitution (PolarQuant + 1-bit QJL) is the
-            // next commit on the fork's tq-main branch.
+            // Path 2.1c: route the attention triple through libturboquant via
+            // the custom ggml op + provider hook. Flash attention must be off
+            // — our custom op replaces the standard Q@K.T → softmax → attn@V
+            // path, not the fused flash kernel.
             cparams.kv_turboquant   = true;
-            // FP16 K/V backing while the algorithm is still landing — the new
-            // class currently delegates to llama_kv_cache base behaviour.
-            LOGI("loadModel: KV cache = TurboQuant (PolarQuant + 1-bit QJL, "
-                 "ICLR 2026) — algorithmic substitution pending");
+            cparams.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_DISABLED;
+            LOGI("loadModel: KV cache = TurboQuant (PolarQuant + 1-bit QJL); "
+                 "flash attn disabled, custom ggml op active");
             break;
         default:
             LOGI("loadModel: KV cache = f16 (baseline)");
