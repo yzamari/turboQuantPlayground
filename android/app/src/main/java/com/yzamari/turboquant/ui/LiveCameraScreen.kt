@@ -319,19 +319,25 @@ private fun CameraPreviewView(
                 }
 
                 // Encode the frame to JPEG on this analyzer thread (cheap
-                // vs the VLM call). Frame's already low-res from the
-                // ResolutionSelector below, no further downscale needed.
+                // vs the VLM call). The ResolutionSelector below *requests*
+                // 640×480 from CameraX, but on some HALs that's only a hint
+                // — actual frames can come back larger. SigLIP downscales
+                // to 384×384 internally anyway, so anything above 640×480
+                // is wasted JPEG-encode and (more importantly) wasted
+                // SigLIP preprocess work. Cap defensively here.
                 val tFrameStart = System.currentTimeMillis()
                 val bitmap: Bitmap = imageProxy.toBitmap()
                 val rotation = imageProxy.imageInfo.rotationDegrees
                 imageProxy.close()
                 val rotated = if (rotation != 0) rotateBitmap(bitmap, rotation) else bitmap
+                val downscaled = downscaleToFit(rotated, MAX_LONG_EDGE_PX)
                 val jpegFile = File(context.cacheDir, "live_frame.jpg")
                 FileOutputStream(jpegFile).use { fos ->
-                    rotated.compress(Bitmap.CompressFormat.JPEG, 85, fos)
+                    downscaled.compress(Bitmap.CompressFormat.JPEG, 85, fos)
                 }
                 if (rotated !== bitmap) bitmap.recycle()
-                rotated.recycle()
+                if (downscaled !== rotated) rotated.recycle()
+                downscaled.recycle()
 
                 // Hand the JPEG path to the VLM. Returns when generation
                 // ends, then we release the gate so the analyzer accepts
@@ -431,6 +437,19 @@ private fun rotateBitmap(src: Bitmap, degrees: Int): Bitmap {
     if (degrees == 0) return src
     val matrix = android.graphics.Matrix().apply { postRotate(degrees.toFloat()) }
     return Bitmap.createBitmap(src, 0, 0, src.width, src.height, matrix, /*filter=*/true)
+}
+
+/** SigLIP downsamples to 384×384, so feeding anything beyond ~640 on the long
+ *  edge is wasted JPEG-encode + wasted SigLIP preprocess work. Returns [src]
+ *  unchanged when it's already small enough. */
+private const val MAX_LONG_EDGE_PX = 640
+private fun downscaleToFit(src: Bitmap, maxLongEdge: Int): Bitmap {
+    val longEdge = maxOf(src.width, src.height)
+    if (longEdge <= maxLongEdge) return src
+    val scale = maxLongEdge.toFloat() / longEdge
+    val w = (src.width  * scale).toInt().coerceAtLeast(1)
+    val h = (src.height * scale).toInt().coerceAtLeast(1)
+    return Bitmap.createScaledBitmap(src, w, h, /*filter=*/true)
 }
 
 private fun parseDecodeTps(statsJson: String): Float {
