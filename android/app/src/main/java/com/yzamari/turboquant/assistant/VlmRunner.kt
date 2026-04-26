@@ -58,10 +58,11 @@ class VlmRunner(private val ctx: Context) {
 
     suspend fun describe(
         imagePath: String,
-        prompt: String = "Describe this image in one sentence.",
-        maxTokens: Int = 60,
+        prompt: String = "Describe this image in detail.",
+        maxTokens: Int = 200,
         threads: Int = 8,
     ): Result = withContext(Dispatchers.IO) {
+        val startMs = System.currentTimeMillis()
         val filesDir = ctx.getExternalFilesDir(null)
             ?: return@withContext Result("External files dir not accessible.", "")
         val model  = File(filesDir, MODEL_FILE)
@@ -108,12 +109,13 @@ class VlmRunner(private val ctx: Context) {
         } else if (tokensPerSec.size == 1) {
             null to tokensPerSec[0].groupValues[1].toFloatOrNull()
         } else null to null
+        val elapsedMs = System.currentTimeMillis() - startMs
+        val elapsedSec = elapsedMs / 1000.0
         val stats = buildString {
-            if (gen != null) append("VLM gen ${"%.1f".format(gen)} tok/s")
-            if (pp  != null) {
-                if (isNotEmpty()) append(" · ")
-                append("prompt ${"%.1f".format(pp)} tok/s")
-            }
+            append("⏱ ${"%.1f".format(elapsedSec)}s")
+            if (gen != null) append(" · gen ${"%.1f".format(gen)} tok/s")
+            if (pp  != null) append(" · prompt ${"%.1f".format(pp)} tok/s")
+            append(" · SmolVLM-256M")
         }
 
         Result(

@@ -149,22 +149,37 @@ fun ChatScreen(vm: AssistantViewModel) {
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
-        TopAppBar(
-            title = {
-                Column {
-                    Text("TurboQuant Assistant",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold)
+        // Gradient header for a more inspiring look.
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(
+                    androidx.compose.ui.graphics.Brush.horizontalGradient(
+                        colors = listOf(
+                            MaterialTheme.colorScheme.primaryContainer,
+                            MaterialTheme.colorScheme.tertiaryContainer,
+                        )
+                    )
+                )
+                .padding(horizontal = 16.dp, vertical = 12.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        "✦ TurboQuant Assistant",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    )
                     Text(
                         if (vm.isModelReady())
-                            "on-device · Llama-3.2-1B"
+                            "on-device · Llama-3.2-1B (text) · SmolVLM-256M (vision)"
                         else
-                            "no model loaded — open Settings",
-                        style = MaterialTheme.typography.bodySmall
+                            "no model loaded — open Settings to load Llama-3.2-1B",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.85f),
                     )
                 }
-            },
-            actions = {
                 IconButton(onClick = {
                     vm.ttsEnabled = !vm.ttsEnabled
                     if (!vm.ttsEnabled) vm.stopTts()
@@ -172,24 +187,33 @@ fun ChatScreen(vm: AssistantViewModel) {
                     Icon(
                         if (vm.ttsEnabled) Icons.Filled.VolumeUp else Icons.Filled.VolumeOff,
                         contentDescription = "Toggle voice output",
+                        tint = MaterialTheme.colorScheme.onPrimaryContainer,
                     )
                 }
-            },
-            colors = TopAppBarDefaults.topAppBarColors(
-                containerColor = MaterialTheme.colorScheme.surfaceContainer
-            )
-        )
+            }
+        }
 
-        // Stats line (subtle).
+        // Stats chip — prominent, with timing + tok/s + active model.
         if (vm.statsJson.isNotBlank()) {
-            Text(
-                vm.statsJson,
-                style = MaterialTheme.typography.labelSmall,
-                fontFamily = FontFamily.Monospace,
+            Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 2.dp)
-            )
+                    .padding(horizontal = 12.dp, vertical = 4.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    vm.statsJson,
+                    style = MaterialTheme.typography.labelMedium,
+                    fontFamily = FontFamily.Monospace,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                    modifier = Modifier
+                        .background(
+                            MaterialTheme.colorScheme.secondaryContainer,
+                            androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
+                        )
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                )
+            }
         }
 
         LazyColumn(
@@ -354,18 +378,56 @@ private fun ChatBubble(entry: ChatEntry) {
         }
         is ChatEntry.AssistantMsg -> {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Start) {
-                Card(
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant,
-                        contentColor   = MaterialTheme.colorScheme.onSurfaceVariant,
-                    ),
-                    shape  = RoundedCornerShape(4.dp, 16.dp, 16.dp, 16.dp),
+                androidx.compose.foundation.layout.Column(
                     modifier = Modifier.widthIn(max = 480.dp)
                 ) {
-                    Text(
-                        entry.text.ifBlank { "…" },
-                        modifier = Modifier.padding(12.dp),
-                    )
+                    Card(
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                            contentColor   = MaterialTheme.colorScheme.onSurfaceVariant,
+                        ),
+                        shape  = RoundedCornerShape(4.dp, 16.dp, 16.dp, 16.dp),
+                    ) {
+                        Text(
+                            entry.text.ifBlank { "…" },
+                            modifier = Modifier.padding(12.dp),
+                        )
+                    }
+                    if (!entry.streaming && (entry.timing != null || entry.ctxLeft != null)) {
+                        Row(
+                            modifier = Modifier.padding(top = 4.dp, start = 4.dp),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            entry.timing?.let { t ->
+                                Text(
+                                    t,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontFamily = FontFamily.Monospace,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                                    modifier = Modifier
+                                        .background(
+                                            MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.6f),
+                                            RoundedCornerShape(8.dp),
+                                        )
+                                        .padding(horizontal = 6.dp, vertical = 2.dp),
+                                )
+                            }
+                            entry.ctxLeft?.let { c ->
+                                Text(
+                                    c,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontFamily = FontFamily.Monospace,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                                    modifier = Modifier
+                                        .background(
+                                            MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.6f),
+                                            RoundedCornerShape(8.dp),
+                                        )
+                                        .padding(horizontal = 6.dp, vertical = 2.dp),
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }

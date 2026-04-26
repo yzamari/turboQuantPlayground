@@ -21,13 +21,14 @@ class Assistant(
     private val handle: Long,
     private val toolDispatcher: ToolDispatcher,
     private val maxToolHops: Int = 3,
-    private val maxTokensPerTurn: Int = 256,
+    private val maxTokensPerTurn: Int = 512,
 ) {
     sealed class AssistantEvent {
         data class Token(val text: String) : AssistantEvent()
         data class ToolCall(val name: String, val argsJson: String) : AssistantEvent()
         data class ToolResultEvent(val name: String, val resultJson: String) : AssistantEvent()
         data class Final(val reply: String) : AssistantEvent()
+        data class Stats(val text: String) : AssistantEvent()
         data class ErrorEvent(val message: String) : AssistantEvent()
     }
 
@@ -108,6 +109,7 @@ class Assistant(
      * JSON line. This is what the UI actually uses.
      */
     fun respondStreaming(userText: String): Flow<AssistantEvent> = callbackFlow {
+        val startMs = System.currentTimeMillis()
         history.add(Message("user", userText))
 
         try {
@@ -155,7 +157,9 @@ class Assistant(
                 finalText = visible
                 break
             }
+            val elapsedMs = System.currentTimeMillis() - startMs
             trySend(AssistantEvent.Final(finalText))
+            trySend(AssistantEvent.Stats("⏱ ${"%.1f".format(elapsedMs / 1000.0)}s · Llama-3.2-1B"))
         } catch (t: Throwable) {
             Log.e(TAG, "respondStreaming failed", t)
             trySend(AssistantEvent.ErrorEvent("Generation failed: ${t.message}"))
