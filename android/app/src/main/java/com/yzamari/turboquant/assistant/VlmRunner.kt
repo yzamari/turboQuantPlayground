@@ -42,7 +42,12 @@ class VlmRunner(private val ctx: Context) {
     }
 
     /** Currently-selected VLM model. Mutable so Settings can change it live;
-     *  changing it triggers a reload on the next [describe] call. */
+     *  changing it triggers a reload on the next [describe] call.
+     *
+     *  Default SmolVLM-256M: ~256 MB on disk, ~1 FPS continuous on Adreno
+     *  with the persistent session. Qwen2.5-VL-3B is available as the
+     *  multilingual / higher-quality option in Settings (much heavier:
+     *  ~2.6 GB on disk, ~0.2 FPS). */
     @Volatile
     var activeModel: Model = Model.SMOLVLM_256M
         set(value) {
