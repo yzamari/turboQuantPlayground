@@ -86,6 +86,7 @@ add_library(turboquant STATIC
     src/packing.cpp
     src/quantizer.cpp
     src/kv_cache.cpp
+    src/attention_turboquant.cpp
     src/backend_factory.cpp
     ${TQ_CODEBOOK_GENERATED_SOURCES}
 )
