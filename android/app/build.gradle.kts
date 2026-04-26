@@ -28,6 +28,17 @@ android {
 
         externalNativeBuild {
             cmake {
+                // Qualcomm QNN/HTP backend is opt-in: build only if the dev
+                // exports QNN_SDK_ROOT (env or gradle.properties), otherwise
+                // libturboquant builds without it and create_best_backend()
+                // skips QnnHtp at runtime. Either source works; Gradle
+                // property has priority so it can be set per-machine in
+                // local.properties without polluting the environment.
+                val qnnSdkRoot: String? =
+                    (project.findProperty("turboquant.qnnSdkRoot") as String?)
+                        ?: System.getenv("QNN_SDK_ROOT")
+                val qnnEnabled = !qnnSdkRoot.isNullOrBlank()
+
                 arguments += listOf(
                     "-DANDROID_STL=c++_static",
                     "-DANDROID_ARM_NEON=ON",
@@ -37,8 +48,18 @@ android {
                     "-DTQ_WITH_NEON=ON",
                     "-DTQ_WITH_OPENCL=OFF",
                     "-DTQ_WITH_VULKAN=OFF",
-                    "-DTQ_WITH_QNN=OFF",
+                    "-DTQ_WITH_QNN=" + (if (qnnEnabled) "ON" else "OFF"),
                 )
+                if (qnnEnabled) {
+                    arguments += "-DQNN_SDK_ROOT=$qnnSdkRoot"
+                    println(
+                        "[turboquant] QNN/HTP backend ENABLED " +
+                            "(QNN_SDK_ROOT=$qnnSdkRoot). Make sure " +
+                            "lib/aarch64-android/*.so + " +
+                            "lib/hexagon-v75/unsigned/*Skel.so " +
+                            "are present under that root."
+                    )
+                }
                 // Note: exceptions/rtti must be enabled because the cpp/ core
                 // throws std::invalid_argument from kv_cache.cpp & quantizer.cpp.
                 cppFlags += listOf("-std=c++17", "-O3")

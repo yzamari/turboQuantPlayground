@@ -46,6 +46,14 @@ fun BenchScreen() {
     var liveOutput by remember { mutableStateOf<String?>(null) }
     var seqLensInput by remember { mutableStateOf("128,512,2048,4096,8192,16384,32768,65536") }
     var bits by remember { mutableStateOf(3) }
+    // Available backends are discovered at startup via JNI — only those that
+    // create_backend() returns non-null for show up here. cpu_neon is always
+    // present on arm64; qnn_htp only when the build includes the QNN scaffold
+    // *and* the runtime libs are reachable on the device.
+    val backends = remember { runCatching { TurboQuantNative.listBackends().toList() }
+        .getOrDefault(listOf("cpu_neon")) }
+    var backend by remember { mutableStateOf(
+        if ("qnn_htp" in backends) "qnn_htp" else "cpu_neon") }
 
     Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
         // ---------- Gradient header ----------
@@ -145,6 +153,32 @@ fun BenchScreen() {
                     }
                 }
 
+                // Backend picker — only renders when more than one is available
+                // (always at least cpu_neon on arm64; +qnn_htp when the QNN
+                // scaffold is built into the APK and the device has the
+                // runtime reachable, e.g. Samsung S24 Ultra ships QNN libs at
+                // /vendor/lib64/snap/).
+                if (backends.size > 1) {
+                    Row(modifier = Modifier.padding(top = 8.dp)) {
+                        Text("backend:", style = MaterialTheme.typography.labelMedium,
+                             modifier = Modifier.padding(end = 8.dp))
+                    }
+                    Row(modifier = Modifier.padding(top = 4.dp)) {
+                        for (b in backends) {
+                            Button(
+                                onClick = { backend = b },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = if (b == backend) MaterialTheme.colorScheme.tertiary
+                                                      else MaterialTheme.colorScheme.surface,
+                                    contentColor = if (b == backend) MaterialTheme.colorScheme.onTertiary
+                                                      else MaterialTheme.colorScheme.onSurface,
+                                ),
+                                modifier = Modifier.padding(end = 6.dp),
+                            ) { Text(b) }
+                        }
+                    }
+                }
+
                 Button(
                     onClick = {
                         val seqLens = seqLensInput.split(",")
@@ -152,12 +186,12 @@ fun BenchScreen() {
                             .ifEmpty { listOf(128, 512, 2048, 4096) }
                             .toIntArray()
                         running = true
-                        liveOutput = "Running on cpu_neon (BH=8, D=128, ${bits}-bit)…"
+                        liveOutput = "Running on $backend (BH=8, D=128, ${bits}-bit)…"
                         scope.launch {
                             val out = withContext(Dispatchers.IO) {
                                 runCatching {
                                     TurboQuantNative.runBenchmark(
-                                        "cpu_neon", seqLens, bits, /*BH*/8, /*D*/128
+                                        backend, seqLens, bits, /*BH*/8, /*D*/128
                                     )
                                 }.getOrElse { "Bench failed: ${it.message}" }
                             }
