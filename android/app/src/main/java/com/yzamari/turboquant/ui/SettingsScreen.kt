@@ -279,6 +279,7 @@ fun SettingsScreen(vm: AssistantViewModel) {
                     "FP16 (no compression)" to 0,
                     "q4_0 — 4× compressed (TurboQuant cousin) ⭐" to 1,
                     "q8_0 — 2× compressed" to 2,
+                    "TurboQuant native — PolarQuant + 1-bit QJL (Path 2, scaffold)" to 3,
                 )) {
                     OutlinedButton(
                         onClick = { vm.kvType = value },

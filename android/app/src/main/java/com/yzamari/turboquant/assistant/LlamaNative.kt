@@ -26,7 +26,12 @@ object LlamaNative {
 
     /**
      * Loads a GGUF model.
-     * @param kvType    0 = FP16 (baseline), 1 = q4_0 (4× compressed, TurboQuant cousin), 2 = q8_0 (2×).
+     * @param kvType    0 = FP16 (baseline)
+     *                  1 = q4_0 (4× compressed, TurboQuant cousin)
+     *                  2 = q8_0 (2× compressed)
+     *                  3 = TurboQuant native (Path 2, ICLR 2026 — algorithmic substitution
+     *                      pending on the llama.cpp fork's tq-main branch; today the new
+     *                      cache class is plumbed end-to-end and falls back to FP16)
      * @param gpuLayers 99 = offload all to Adreno via ggml-opencl, 0 = CPU only.
      */
     @JvmStatic external fun loadModel(

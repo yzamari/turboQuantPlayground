@@ -159,6 +159,18 @@ Java_com_yzamari_turboquant_assistant_LlamaNative_loadModel(
             cparams.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_ENABLED;
             LOGI("loadModel: KV cache = q8_0 (2× compressed, +flash attn)");
             break;
+        case 3:
+            // Path 2: route the KV cache through TurboQuant. The model factory
+            // in our llama.cpp fork detects this flag and instantiates
+            // llama_kv_cache_turboquant. P2.1 scaffold lands the plumbing —
+            // the algorithmic K/V substitution (PolarQuant + 1-bit QJL) is the
+            // next commit on the fork's tq-main branch.
+            cparams.kv_turboquant   = true;
+            // FP16 K/V backing while the algorithm is still landing — the new
+            // class currently delegates to llama_kv_cache base behaviour.
+            LOGI("loadModel: KV cache = TurboQuant (PolarQuant + 1-bit QJL, "
+                 "ICLR 2026) — algorithmic substitution pending");
+            break;
         default:
             LOGI("loadModel: KV cache = f16 (baseline)");
             break;
