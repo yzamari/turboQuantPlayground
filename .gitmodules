@@ -1,0 +1,7 @@
+[submodule "external/llama.cpp"]
+	path = external/llama.cpp
+	url = https://github.com/yzamari/llama.cpp.git
+	branch = tq-main
+[submodule "external/OpenCL-Headers"]
+	path = external/OpenCL-Headers
+	url = https://github.com/KhronosGroup/OpenCL-Headers.git
