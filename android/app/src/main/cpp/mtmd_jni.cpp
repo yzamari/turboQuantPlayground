@@ -1,0 +1,379 @@
+// JNI bridge for the mtmd (multimodal text+image) decoder.
+//
+// Backs com.yzamari.turboquant.assistant.MtmdNative. Replaces the previous
+// Runtime.exec("libllama-mtmd-cli.so") fork-per-image pattern in VlmRunner
+// with a long-lived in-process session: load the LLM + mmproj once,
+// describe N images without paying the per-call model-load tax (~3 s for
+// SmolVLM-256M, ~8 s for Qwen2.5-VL-3B on Snapdragon 8 Gen 3).
+//
+// Public API (all C-linkage, JNI naming):
+//   loadModel(modelPath, mmprojPath, ctxSize, threads, gpuLayers, kvType) -> long handle
+//   unloadModel(long handle)
+//   describe(long handle, imagePath, prompt, maxTokens, GenCallback cb) -> void
+//   getStats(long handle) -> String  (JSON, matches LlamaNative.getStats)
+//
+// Linkage: depends on the public 'mtmd' library target from llama.cpp/tools/mtmd/.
+// Backends are loaded lazily on the first call (init_backends_once below);
+// llama_jni.cpp does the same thing on its side, the second caller is a no-op.
+
+#include <jni.h>
+
+#include "llama.h"
+#include "ggml.h"
+#include "ggml-backend.h"
+#include "mtmd.h"
+#include "mtmd-helper.h"
+
+#include <android/log.h>
+
+#include <atomic>
+#include <chrono>
+#include <cstdint>
+#include <cstdio>
+#include <cstring>
+#include <mutex>
+#include <sstream>
+#include <string>
+#include <vector>
+
+#define LOG_TAG "mtmd_jni"
+#define LOGI(...) __android_log_print(ANDROID_LOG_INFO,  LOG_TAG, __VA_ARGS__)
+#define LOGW(...) __android_log_print(ANDROID_LOG_WARN,  LOG_TAG, __VA_ARGS__)
+#define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
+
+namespace {
+
+struct VlmStats {
+    double load_ms        = 0.0;
+    double mmproj_load_ms = 0.0;
+    double image_eval_ms  = 0.0;
+    double prompt_ms      = 0.0;
+    double decode_ms      = 0.0;
+    int    n_image_tokens = 0;
+    int    n_prompt       = 0;
+    int    n_decode       = 0;
+};
+
+struct VlmSession {
+    llama_model   * model       = nullptr;
+    llama_context * ctx         = nullptr;
+    llama_sampler * sampler     = nullptr;
+    mtmd_context  * vision      = nullptr;
+    int             n_ctx       = 0;
+    int             n_threads   = 4;
+    int             n_batch     = 512;
+    llama_pos       n_past      = 0;     // running cursor across describe() calls
+    VlmStats        last;
+    std::mutex      mu;
+};
+
+std::atomic<bool> g_backend_inited{false};
+std::mutex        g_backend_init_mu;
+
+void init_backends_once() {
+    if (g_backend_inited.load(std::memory_order_acquire)) return;
+    std::lock_guard<std::mutex> lk(g_backend_init_mu);
+    if (g_backend_inited.load(std::memory_order_relaxed)) return;
+    llama_log_set([](enum ggml_log_level level, const char * text, void * /*ud*/) {
+        if (level >= GGML_LOG_LEVEL_WARN) {
+            __android_log_print(ANDROID_LOG_INFO, "llama", "%s", text);
+        }
+    }, nullptr);
+    ggml_backend_load_all();
+    LOGI("ggml backends loaded");
+    g_backend_inited.store(true, std::memory_order_release);
+}
+
+std::string jstring_to_std(JNIEnv * env, jstring js) {
+    if (!js) return {};
+    const char * c = env->GetStringUTFChars(js, nullptr);
+    std::string  s = c ? c : "";
+    if (c) env->ReleaseStringUTFChars(js, c);
+    return s;
+}
+
+double now_ms() {
+    using namespace std::chrono;
+    return duration<double, std::milli>(steady_clock::now().time_since_epoch()).count();
+}
+
+std::string token_to_piece(const llama_vocab * vocab, llama_token tok) {
+    char buf[256];
+    int n = llama_token_to_piece(vocab, tok, buf, sizeof(buf), 0, /*special=*/true);
+    if (n < 0) return {};
+    return std::string(buf, n);
+}
+
+// Build a ChatML-formatted prompt with the mtmd image marker placed inside
+// the user turn. SmolVLM-256M and Qwen2.5-VL-3B (the two VLMs the assistant
+// app supports) both expect ChatML; the image marker is replaced by image
+// tokens during mtmd_tokenize.
+std::string build_vlm_prompt(const std::string & user_text) {
+    const char * marker = mtmd_default_marker();
+    std::string p;
+    p.reserve(user_text.size() + 80);
+    p += "<|im_start|>user\n";
+    p += marker ? marker : "<__media__>";
+    p += "\n";
+    p += user_text;
+    p += "<|im_end|>\n<|im_start|>assistant\n";
+    return p;
+}
+
+}  // namespace
+
+extern "C" {
+
+// -------------------------------------------------------------------------
+// loadModel(modelPath, mmprojPath, ctxSize, threads, gpuLayers, kvType) -> long
+JNIEXPORT jlong JNICALL
+Java_com_yzamari_turboquant_assistant_MtmdNative_loadModel(
+    JNIEnv * env, jclass,
+    jstring jModelPath, jstring jMmprojPath,
+    jint ctxSize, jint threads, jint gpuLayers, jint kvType) {
+
+    init_backends_once();
+
+    const std::string modelPath  = jstring_to_std(env, jModelPath);
+    const std::string mmprojPath = jstring_to_std(env, jMmprojPath);
+    if (modelPath.empty() || mmprojPath.empty()) {
+        LOGE("loadModel: empty path(s)");
+        return 0;
+    }
+    LOGI("loadModel: model=%s mmproj=%s ctx=%d threads=%d gpu=%d kvType=%d",
+         modelPath.c_str(), mmprojPath.c_str(), ctxSize, threads, gpuLayers, kvType);
+
+    const double t0 = now_ms();
+
+    auto sess = std::make_unique<VlmSession>();
+    sess->n_ctx     = std::max(512, (int) ctxSize);
+    sess->n_threads = std::max(1,   (int) threads);
+    sess->n_batch   = sess->n_ctx;
+
+    // ---- 1. Load the LLM ------------------------------------------------
+    llama_model_params mparams = llama_model_default_params();
+    mparams.n_gpu_layers = (int) gpuLayers;
+    sess->model = llama_model_load_from_file(modelPath.c_str(), mparams);
+    if (!sess->model) {
+        LOGE("loadModel: llama_model_load_from_file(%s) failed", modelPath.c_str());
+        return 0;
+    }
+
+    llama_context_params cparams = llama_context_default_params();
+    cparams.n_ctx           = (uint32_t) sess->n_ctx;
+    cparams.n_batch         = (uint32_t) sess->n_batch;
+    cparams.n_threads       = sess->n_threads;
+    cparams.n_threads_batch = sess->n_threads;
+
+    switch ((int) kvType) {
+        case 1:
+            cparams.type_k          = GGML_TYPE_Q4_0;
+            cparams.type_v          = GGML_TYPE_Q4_0;
+            cparams.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_ENABLED;
+            LOGI("loadModel: KV cache = q4_0 (4× compressed, +flash attn)");
+            break;
+        case 2:
+            cparams.type_k          = GGML_TYPE_Q8_0;
+            cparams.type_v          = GGML_TYPE_Q8_0;
+            cparams.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_ENABLED;
+            LOGI("loadModel: KV cache = q8_0 (2× compressed, +flash attn)");
+            break;
+        case 3:
+            cparams.kv_turboquant   = true;
+            LOGI("loadModel: KV cache = TurboQuant (Path 2 scaffold)");
+            break;
+        default:
+            LOGI("loadModel: KV cache = f16 (baseline)");
+            break;
+    }
+
+    sess->ctx = llama_init_from_model(sess->model, cparams);
+    if (!sess->ctx) {
+        LOGE("loadModel: llama_init_from_model failed");
+        llama_model_free(sess->model);
+        return 0;
+    }
+
+    // ---- 2. Sampler (greedy is plenty for image description) -----------
+    sess->sampler = llama_sampler_chain_init(llama_sampler_chain_default_params());
+    llama_sampler_chain_add(sess->sampler, llama_sampler_init_top_k(40));
+    llama_sampler_chain_add(sess->sampler, llama_sampler_init_top_p(0.95f, 1));
+    llama_sampler_chain_add(sess->sampler, llama_sampler_init_temp (0.7f));
+    llama_sampler_chain_add(sess->sampler, llama_sampler_init_dist (LLAMA_DEFAULT_SEED));
+
+    // ---- 3. Load the mmproj / vision encoder ---------------------------
+    const double t_mm0 = now_ms();
+    mtmd_context_params vparams = mtmd_context_params_default();
+    vparams.use_gpu       = gpuLayers > 0;
+    vparams.print_timings = false;
+    vparams.n_threads     = sess->n_threads;
+    vparams.warmup        = false;
+    sess->vision = mtmd_init_from_file(mmprojPath.c_str(), sess->model, vparams);
+    if (!sess->vision) {
+        LOGE("loadModel: mtmd_init_from_file(%s) failed", mmprojPath.c_str());
+        llama_sampler_free(sess->sampler);
+        llama_free(sess->ctx);
+        llama_model_free(sess->model);
+        return 0;
+    }
+    sess->last.mmproj_load_ms = now_ms() - t_mm0;
+    sess->last.load_ms        = now_ms() - t0;
+    LOGI("loadModel: ready in %.1f ms (mmproj %.1f ms)",
+         sess->last.load_ms, sess->last.mmproj_load_ms);
+
+    return reinterpret_cast<jlong>(sess.release());
+}
+
+// -------------------------------------------------------------------------
+JNIEXPORT void JNICALL
+Java_com_yzamari_turboquant_assistant_MtmdNative_unloadModel(JNIEnv *, jclass, jlong handle) {
+    auto * sess = reinterpret_cast<VlmSession *>(handle);
+    if (!sess) return;
+    if (sess->vision)  mtmd_free(sess->vision);
+    if (sess->sampler) llama_sampler_free(sess->sampler);
+    if (sess->ctx)     llama_free(sess->ctx);
+    if (sess->model)   llama_model_free(sess->model);
+    delete sess;
+    LOGI("unloadModel: freed");
+}
+
+// -------------------------------------------------------------------------
+// describe(handle, imagePath, prompt, maxTokens, GenCallback cb) -> void
+JNIEXPORT void JNICALL
+Java_com_yzamari_turboquant_assistant_MtmdNative_describe(
+    JNIEnv * env, jclass,
+    jlong handle,
+    jstring jImagePath, jstring jPrompt,
+    jint maxTokens, jobject jcb) {
+
+    auto * sess = reinterpret_cast<VlmSession *>(handle);
+    if (!sess) {
+        LOGE("describe: null handle");
+        return;
+    }
+    std::lock_guard<std::mutex> lk(sess->mu);
+
+    const std::string imagePath = jstring_to_std(env, jImagePath);
+    const std::string userText  = jstring_to_std(env, jPrompt);
+
+    jclass  cbClass = jcb ? env->GetObjectClass(jcb) : nullptr;
+    jmethodID onTok = cbClass ? env->GetMethodID(cbClass, "onToken",
+                                                  "(Ljava/lang/String;)V") : nullptr;
+    auto emit = [&](const std::string & piece) {
+        if (!cbClass || !onTok || piece.empty()) return;
+        jstring s = env->NewStringUTF(piece.c_str());
+        env->CallVoidMethod(jcb, onTok, s);
+        env->DeleteLocalRef(s);
+    };
+
+    // Reset the KV cache cursor — each describe() call is an independent
+    // single-turn conversation. (Multi-turn vision chat is a follow-up.)
+    llama_memory_clear(llama_get_memory(sess->ctx), /*data=*/true);
+    sess->n_past = 0;
+
+    // ---- Load the image bitmap from disk -------------------------------
+    mtmd_bitmap * bmp = mtmd_helper_bitmap_init_from_file(sess->vision, imagePath.c_str());
+    if (!bmp) {
+        LOGE("describe: failed to load bitmap from %s", imagePath.c_str());
+        emit("(failed to load image)");
+        return;
+    }
+    LOGI("describe: image %s -> %ux%u",
+         imagePath.c_str(),
+         (unsigned) mtmd_bitmap_get_nx(bmp),
+         (unsigned) mtmd_bitmap_get_ny(bmp));
+
+    // ---- Tokenize prompt + image into mtmd chunks ----------------------
+    const std::string prompt = build_vlm_prompt(userText);
+    mtmd_input_text text{};
+    text.text          = prompt.c_str();
+    text.add_special   = true;
+    text.parse_special = true;
+
+    mtmd_input_chunks * chunks = mtmd_input_chunks_init();
+    const mtmd_bitmap * bmps[1] = { bmp };
+    if (mtmd_tokenize(sess->vision, chunks, &text, bmps, 1) != 0) {
+        LOGE("describe: mtmd_tokenize failed");
+        emit("(tokenize failed)");
+        mtmd_input_chunks_free(chunks);
+        mtmd_bitmap_free(bmp);
+        return;
+    }
+    sess->last.n_image_tokens = (int) mtmd_helper_get_n_tokens(chunks);
+    sess->last.n_prompt       = (int) mtmd_helper_get_n_pos(chunks);
+
+    // ---- Eval all chunks (image + text) into KV ------------------------
+    const double t_img0 = now_ms();
+    llama_pos new_n_past = 0;
+    int rc = mtmd_helper_eval_chunks(
+        sess->vision,
+        sess->ctx,
+        chunks,
+        /*n_past=*/0,
+        /*seq_id=*/0,
+        /*n_batch=*/sess->n_batch,
+        /*logits_last=*/true,
+        &new_n_past);
+    mtmd_input_chunks_free(chunks);
+    mtmd_bitmap_free(bmp);
+    if (rc != 0) {
+        LOGE("describe: mtmd_helper_eval_chunks failed (%d)", rc);
+        emit("(eval failed)");
+        return;
+    }
+    sess->n_past             = new_n_past;
+    sess->last.image_eval_ms = now_ms() - t_img0;
+
+    // ---- Decode loop: sample, emit, advance KV -------------------------
+    const llama_vocab * vocab = llama_model_get_vocab(sess->model);
+    llama_batch batch = llama_batch_init(1, 0, 1);
+    const double t_dec0 = now_ms();
+    int n_decoded = 0;
+    for (int i = 0; i < (int) maxTokens; ++i) {
+        const llama_token tok = llama_sampler_sample(sess->sampler, sess->ctx, -1);
+        if (llama_vocab_is_eog(vocab, tok)) break;
+
+        const std::string piece = token_to_piece(vocab, tok);
+        emit(piece);
+        n_decoded++;
+
+        batch.n_tokens   = 1;
+        batch.token[0]   = tok;
+        batch.pos[0]     = sess->n_past++;
+        batch.n_seq_id[0]= 1;
+        batch.seq_id[0][0]= 0;
+        batch.logits[0]  = true;
+        if (llama_decode(sess->ctx, batch) != 0) {
+            LOGE("describe: llama_decode failed at step %d", i);
+            break;
+        }
+    }
+    llama_batch_free(batch);
+    sess->last.decode_ms = now_ms() - t_dec0;
+    sess->last.n_decode  = n_decoded;
+
+    LOGI("describe: image %.1f ms · decode %d tok in %.1f ms (%.1f tok/s)",
+         sess->last.image_eval_ms, n_decoded, sess->last.decode_ms,
+         n_decoded / std::max(1.0, sess->last.decode_ms / 1000.0));
+}
+
+// -------------------------------------------------------------------------
+JNIEXPORT jstring JNICALL
+Java_com_yzamari_turboquant_assistant_MtmdNative_getStats(JNIEnv * env, jclass, jlong handle) {
+    auto * sess = reinterpret_cast<VlmSession *>(handle);
+    if (!sess) return env->NewStringUTF("{}");
+    char buf[512];
+    const auto & s = sess->last;
+    const double dec_tps = s.decode_ms > 0 ? s.n_decode / (s.decode_ms / 1000.0) : 0.0;
+    std::snprintf(buf, sizeof(buf),
+        "{\"load_ms\":%.1f,\"mmproj_load_ms\":%.1f,"
+         "\"image_eval_ms\":%.1f,\"n_image_tokens\":%d,"
+         "\"n_prompt\":%d,\"n_decode\":%d,\"decode_ms\":%.1f,"
+         "\"decode_tok_per_sec\":%.2f}",
+        s.load_ms, s.mmproj_load_ms,
+        s.image_eval_ms, s.n_image_tokens,
+        s.n_prompt, s.n_decode, s.decode_ms, dec_tps);
+    return env->NewStringUTF(buf);
+}
+
+}  // extern "C"
