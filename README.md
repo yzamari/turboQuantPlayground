@@ -8,6 +8,20 @@ TurboQuant (ICLR 2026) from NVIDIA Triton.
 > loss, lights up CPU + GPU + NPU on Snapdragon, and the same library ships
 > from your S24 today to a Qualcomm-powered car tomorrow.
 
+## What this fork adds
+
+| Capability | Closest upstream alternative | **This repo** |
+|---|---|---|
+| TurboQuant implementation | Google's reference impl: Python + NVIDIA Triton, CUDA-only, server GPU | **Plain CMake C++17**, header-only public API, automotive-portable, zero OS deps in core |
+| Compute backends | CUDA | **CPU scalar · ARM NEON · Adreno OpenCL · Adreno Vulkan · QNN/HTP scaffold** — 4 fully-implemented + 1 stubbed |
+| Target platforms | x86 + NVIDIA, Apple Silicon | **Snapdragon mobile** (S24 Ultra / Tab S9+) + **automotive-ready** toolchain stubs (QNX aarch64, Linux aarch64 for SA8155P / SA8295P / SA8775P) |
+| llama.cpp integration | None — TurboQuant runs standalone | **Vendored fork** at [`yzamari/llama.cpp`](https://github.com/yzamari/llama.cpp) `tq-main` with new `llama_kv_cache_turboquant` class + `kvType=3` selectable from production app today (algorithmic substitution scoped in [`docs/path2-algorithm-playbook.md`](docs/path2-algorithm-playbook.md)) |
+| On-device app | Reference scripts only | **Android Compose assistant** (`com.yzamari.turboquant`) — 4 tabs (Assistant · Live · Bench · Settings), voice in/out, 12 Android-Intent tools, camera VLM, on-device only |
+| VLM pipeline | Naive `Runtime.exec` per image | **Persistent in-process mtmd JNI session** — LLM + mmproj load once, every subsequent image pays only encode + decode (~3.4 s/image → ~0.8–1.2 s warm) |
+| Live VLM | n/a | **CameraX + single-flight gate ~1 FPS continuous** on-device captioning (SmolVLM-256M on Adreno), works in airplane mode |
+
+See [`CHANGELOG.md`](CHANGELOG.md) for the session-by-session deltas.
+
 ## Headline benchmarks (real Snapdragon hardware)
 
 Verified on **Galaxy S24 Ultra** (SD 8 Gen 3) and **Galaxy Tab S9+** (SD 8 Gen 2),
