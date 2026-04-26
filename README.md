@@ -57,6 +57,25 @@ API to amortize). Documented next step.
 | Text LLM   | Llama-3.2-1B-Instruct Q4_K_M (4 GB → 1 GB at runtime) | **30.5 tok/s** |
 | Vision LLM | SmolVLM-256M-Instruct Q8_0 + mmproj (175 MB + 104 MB) | **51.2 tok/s** |
 
+**Works for VLMs the same way as text LLMs.** Verified on the same device
+tonight against SmolVLM-256M-Instruct (30 attention layers, head_dim=64): same
+**4.00× compression ratio**, average cosine 0.91 vs FP16. PolarQuant is
+data-oblivious — every KV vector after rotation has the same Beta-distributed
+coordinates regardless of whether the token came from text or an image.
+Codebooks shipped (`d ∈ {64,128,256,576}`) cover SmolVLM-256M, SmolVLM-1.7B,
+Qwen2.5-VL 3B, and Llama-3.2-Vision. Visual tokens flood the cache faster
+than text (a single high-res image = 1000s of tokens), so VLMs hit the
+bandwidth-bound regime sooner — making compression *more* impactful.
+
+| Model on Tab S9+ | layers | head_dim | compression | cosine(scores) |
+|---|---:|---:|---:|---:|
+| Llama-3.2-1B | 16 | 64 | 4.00× | 0.92 |
+| SmolVLM-256M | 30 | 64 | 4.00× | 0.91 |
+
+See [`docs/qualcomm/benefits.md`](docs/qualcomm/benefits.md#works-for-vlms-not-just-text-only-llms)
+and full bench output at
+[`cpp/bench/results/llamacpp/tabs9p-smolvlm-256m-turboquant-kv.txt`](cpp/bench/results/llamacpp/tabs9p-smolvlm-256m-turboquant-kv.txt).
+
 ### Tokens per second — measured impact of KV-cache compression
 
 LLM decode is memory-bandwidth-bound; at deeper context the KV-cache reads
@@ -117,6 +136,7 @@ What this means for users → [`docs/qualcomm/benefits.md`](docs/qualcomm/benefi
   architecture diagrams of the system.
 
 Quick links:
+- **One-shot setup** → [`scripts/setup-qualcomm.sh`](scripts/setup-qualcomm.sh) (`scripts/setup-qualcomm.sh all` builds the C++ port, llama.cpp, the Android APK, downloads the models, and pushes everything to a connected device)
 - **Tonight's overnight summary** → [`SUMMARY.md`](SUMMARY.md)
 - **Build the C++ port** → [`docs/BUILDING.md`](docs/BUILDING.md)
 - **What this gives you on a Qualcomm device** → [`docs/qualcomm/benefits.md`](docs/qualcomm/benefits.md)

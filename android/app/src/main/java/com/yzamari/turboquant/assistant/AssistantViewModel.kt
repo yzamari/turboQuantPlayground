@@ -21,7 +21,12 @@ class AssistantViewModel(app: Application) : AndroidViewModel(app) {
 
     sealed class ChatEntry {
         data class User(val text: String) : ChatEntry()
-        data class AssistantMsg(var text: String, val streaming: Boolean = false) : ChatEntry()
+        data class AssistantMsg(
+            var text: String,
+            val streaming: Boolean = false,
+            val timing: String? = null,   // e.g. "⏱ 2.4s · 30 tok/s"
+            val ctxLeft: String? = null,  // e.g. "ctx 1840 / 2048 (210 left)"
+        ) : ChatEntry()
         data class Tool(val name: String, val args: String, var result: String? = null) : ChatEntry()
         data class System(val text: String) : ChatEntry()
     }
@@ -39,12 +44,37 @@ class AssistantViewModel(app: Application) : AndroidViewModel(app) {
     var contextSize by mutableStateOf(2048)
     var statsJson  by mutableStateOf("")
         private set
+    /** Maximum context size advertised by the active model (in tokens). */
+    var maxContext by mutableStateOf(0)
+        private set
+    /** Tokens currently in the conversation history (rough estimate). */
+    var ctxUsed by mutableStateOf(0)
+        private set
 
     private var handle: Long = 0L
     private var assistant: Assistant? = null
     private val dispatcher = ToolDispatcher(app.applicationContext)
     private val voice = Voice(app.applicationContext)
+    private val vlm   = VlmRunner(app.applicationContext)
+    private val tqv   = TurboQuantVerifier(app.applicationContext)
     private var generationJob: Job? = null
+
+    /** Latest TurboQuant verification output (set by `verifyTurboQuant`). */
+    var turboQuantStatus by mutableStateOf("")
+        private set
+
+    fun isTurboQuantAvailable(): Boolean = tqv.isAvailable()
+
+    fun verifyTurboQuant() {
+        val modelPath = findModelPath() ?: return run {
+            turboQuantStatus = "No model on disk to verify against."
+        }
+        turboQuantStatus = "Running…"
+        viewModelScope.launch {
+            val out = tqv.verify(modelPath)
+            withContext(Dispatchers.Main) { turboQuantStatus = out }
+        }
+    }
 
     init {
         voice.initTts()
@@ -85,9 +115,12 @@ class AssistantViewModel(app: Application) : AndroidViewModel(app) {
             } else {
                 handle    = h
                 assistant = Assistant(h, dispatcher,
-                    maxToolHops = 3, maxTokensPerTurn = 256)
+                    maxToolHops = 3, maxTokensPerTurn = 512)
+                maxContext = contextSize
                 modelStatus = "Loaded ${File(path).name} (ctx=$contextSize, threads=$threads)"
-                messages.add(ChatEntry.System("Model loaded: ${File(path).name}"))
+                messages.add(ChatEntry.System(
+                    "Model loaded: ${File(path).name} · max context = $contextSize tokens"
+                ))
             }
             loading = false
         }
@@ -120,10 +153,19 @@ class AssistantViewModel(app: Application) : AndroidViewModel(app) {
             messages.add(ChatEntry.System("No model loaded — go to Settings."))
             return
         }
+        val startMs = System.currentTimeMillis()
         messages.add(ChatEntry.User(userText))
         val replyEntry = ChatEntry.AssistantMsg("", streaming = true)
         messages.add(replyEntry)
         generating = true
+        // Approximate ctx usage = chars/4 (Llama tokenizer ratio); refined later.
+        ctxUsed = (messages.sumOf { entry ->
+            when (entry) {
+                is ChatEntry.User -> entry.text.length
+                is ChatEntry.AssistantMsg -> entry.text.length
+                else -> 0
+            }
+        } / 4)
 
         generationJob = viewModelScope.launch {
             val builder = StringBuilder()
@@ -161,17 +203,35 @@ class AssistantViewModel(app: Application) : AndroidViewModel(app) {
                         is Assistant.AssistantEvent.Final -> {
                             val finalText = if (ev.reply.isNotBlank()) ev.reply
                                             else builder.toString()
+                            val elapsedMs = System.currentTimeMillis() - startMs
+                            // Estimate tokens generated ~ chars/4
+                            val genTokens = (finalText.length / 4).coerceAtLeast(1)
+                            val tps = genTokens.toDouble() * 1000 / elapsedMs.coerceAtLeast(1)
+                            val timing = "⏱ ${"%.1f".format(elapsedMs / 1000.0)}s · " +
+                                         "${"%.1f".format(tps)} tok/s"
+                            // Update ctx estimate after generation
+                            ctxUsed += genTokens
+                            val ctxLeft = if (maxContext > 0) {
+                                "ctx ${ctxUsed} / ${maxContext} (${(maxContext - ctxUsed).coerceAtLeast(0)} left)"
+                            } else null
                             withContext(Dispatchers.Main) {
                                 val idx = messages.indexOf(replyEntry)
                                 if (idx >= 0) {
                                     messages[idx] = ChatEntry.AssistantMsg(
-                                        text = finalText.trim(), streaming = false)
+                                        text = finalText.trim(),
+                                        streaming = false,
+                                        timing = timing,
+                                        ctxLeft = ctxLeft,
+                                    )
                                 }
                                 if (ttsEnabled) voice.speak(stripJson(finalText))
                                 statsJson = runCatching {
                                     LlamaNative.getStats(handle)
                                 }.getOrDefault("")
                             }
+                        }
+                        is Assistant.AssistantEvent.Stats -> {
+                            withContext(Dispatchers.Main) { statsJson = ev.text }
                         }
                         is Assistant.AssistantEvent.ErrorEvent -> {
                             withContext(Dispatchers.Main) {
@@ -188,6 +248,71 @@ class AssistantViewModel(app: Application) : AndroidViewModel(app) {
             }
             generating = false
         }
+    }
+
+    /**
+     * Describe a captured image via the on-device SmolVLM. The image is read
+     * from `imagePath` (a regular filesystem path the app has read access to).
+     * The result is appended to the chat as an assistant message.
+     */
+    fun describeImage(imagePath: String, prompt: String? = null) {
+        val userBubble = ChatEntry.User("📷 (sent an image to the assistant)")
+        messages.add(userBubble)
+        // Add the streaming placeholder; remember its index, not its instance,
+        // so we can keep updating the same slot as we replace immutable copies.
+        messages.add(ChatEntry.AssistantMsg("Looking at the image…", streaming = true))
+        val slotIndex = messages.lastIndex
+        generating = true
+        val startMs = System.currentTimeMillis()
+        val streamBuilder = StringBuilder()
+        generationJob = viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    vlm.describe(
+                        imagePath,
+                        prompt ?: "Describe this image in detail.",
+                    ) { piece ->
+                        streamBuilder.append(piece)
+                        viewModelScope.launch(Dispatchers.Main) {
+                            if (slotIndex < messages.size) {
+                                messages[slotIndex] = ChatEntry.AssistantMsg(
+                                    text = streamBuilder.toString().trim(),
+                                    streaming = true,
+                                )
+                            }
+                        }
+                    }
+                }.onFailure { Log.e(TAG, "VLM failed", it) }
+                 .getOrElse { VlmRunner.Result(reply = "(VLM error: ${it.localizedMessage ?: it})", stats = "") }
+            }
+            val elapsedMs = System.currentTimeMillis() - startMs
+            withContext(Dispatchers.Main) {
+                if (slotIndex < messages.size) {
+                    messages[slotIndex] = ChatEntry.AssistantMsg(
+                        text = result.reply.trim().ifBlank { "(empty reply)" },
+                        streaming = false,
+                        timing = "⏱ ${"%.1f".format(elapsedMs / 1000.0)}s · " +
+                                 vlm.activeModel.displayName.substringBefore(" ("),
+                        ctxLeft = result.stats.takeIf { it.isNotBlank() },
+                    )
+                }
+                if (result.stats.isNotBlank()) {
+                    statsJson = result.stats
+                }
+                if (ttsEnabled) voice.speak(result.reply)
+                generating = false
+            }
+        }
+    }
+
+    fun vlmAvailable(): Boolean = vlm.isAvailable()
+    fun vlmDiagnostic(): String = vlm.missingFilesMessage()
+
+    fun availableVlmModels(): List<VlmRunner.Model> = vlm.availableModels()
+    fun activeVlmModel(): VlmRunner.Model = vlm.activeModel
+    fun setActiveVlmModel(m: VlmRunner.Model) {
+        vlm.activeModel = m
+        messages.add(ChatEntry.System("Vision model switched to ${m.displayName}"))
     }
 
     fun resetConversation() {

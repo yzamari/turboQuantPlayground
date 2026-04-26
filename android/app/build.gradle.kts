@@ -78,6 +78,11 @@ android {
 
     packaging {
         resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
+        // Extract jniLibs at install time so Runtime.exec() can invoke our
+        // bundled binaries (we ship llama-mtmd-cli as libllama-mtmd-cli.so).
+        jniLibs {
+            useLegacyPackaging = true
+        }
     }
 }
 

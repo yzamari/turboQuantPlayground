@@ -21,13 +21,14 @@ class Assistant(
     private val handle: Long,
     private val toolDispatcher: ToolDispatcher,
     private val maxToolHops: Int = 3,
-    private val maxTokensPerTurn: Int = 256,
+    private val maxTokensPerTurn: Int = 512,
 ) {
     sealed class AssistantEvent {
         data class Token(val text: String) : AssistantEvent()
         data class ToolCall(val name: String, val argsJson: String) : AssistantEvent()
         data class ToolResultEvent(val name: String, val resultJson: String) : AssistantEvent()
         data class Final(val reply: String) : AssistantEvent()
+        data class Stats(val text: String) : AssistantEvent()
         data class ErrorEvent(val message: String) : AssistantEvent()
     }
 
@@ -108,6 +109,7 @@ class Assistant(
      * JSON line. This is what the UI actually uses.
      */
     fun respondStreaming(userText: String): Flow<AssistantEvent> = callbackFlow {
+        val startMs = System.currentTimeMillis()
         history.add(Message("user", userText))
 
         try {
@@ -121,8 +123,13 @@ class Assistant(
                 LlamaNative.generate(handle, prompt, maxTokensPerTurn) { piece ->
                     collected.append(piece)
                     if (!sawJson) {
-                        // Don't stream once we see the start of a tool-call JSON.
-                        if (collected.toString().contains("{\"tool\"")) {
+                        // Stop streaming once a tool-call JSON looks like it's
+                        // starting. Use a tighter heuristic ({"tool, with the
+                        // double-quote) so legitimate prose-with-curly-braces
+                        // isn't muted. Malformed tool calls that get past this
+                        // are stripped by sanitizeForUser() before they reach
+                        // the chat bubble.
+                        if (collected.contains("{\"tool")) {
                             sawJson = true
                         } else {
                             trySend(AssistantEvent.Token(piece))
@@ -139,16 +146,23 @@ class Assistant(
                     trySend(AssistantEvent.ToolResultEvent(call.first, res.toJson()))
                     history.add(Message("user",
                         "Tool '${call.first}' returned: ${res.toJson()}. " +
-                            "Now reply briefly to my original request."))
+                            "Now reply briefly to my original request in plain text " +
+                            "— do NOT emit JSON."))
                     hop++
                     continue
                 }
 
-                history.add(Message("assistant", text))
-                finalText = text
+                // No tool call — sanitize anything that looks like a JSON blob
+                // (small models often hallucinate malformed tool calls). What
+                // remains is the user-visible reply.
+                val visible = sanitizeForUser(text)
+                history.add(Message("assistant", visible))
+                finalText = visible
                 break
             }
+            val elapsedMs = System.currentTimeMillis() - startMs
             trySend(AssistantEvent.Final(finalText))
+            trySend(AssistantEvent.Stats("⏱ ${"%.1f".format(elapsedMs / 1000.0)}s · Llama-3.2-1B"))
         } catch (t: Throwable) {
             Log.e(TAG, "respondStreaming failed", t)
             trySend(AssistantEvent.ErrorEvent("Generation failed: ${t.message}"))
@@ -163,6 +177,26 @@ class Assistant(
         val roles = history.map { it.role }.toTypedArray()
         val contents = history.map { it.content }.toTypedArray()
         return LlamaNative.applyChatTemplate(handle, roles, contents, true)
+    }
+
+    /**
+     * Strip JSON-looking blocks from text the user is about to see. Small
+     * models often emit hallucinated tool calls that miss our strict JSON
+     * format — those should never make it to the chat bubble.
+     */
+    private fun sanitizeForUser(text: String): String {
+        // Drop balanced { ... } blocks repeatedly (handles single-level nesting).
+        var t = text
+        repeat(3) { t = t.replace(Regex("\\{[^{}]*\\}"), "") }
+        // Drop the Llama-3.2 python-tag marker if present.
+        t = t.replace("<|python_tag|>", "")
+        // Drop common chat-template artifacts that occasionally leak.
+        t = t.replace(Regex("<\\|[a-z_]+\\|>"), "")
+        // Drop any trailing JSON-fragment that didn't have a closing brace.
+        val brace = t.indexOf('{')
+        if (brace >= 0) t = t.substring(0, brace)
+        t = t.trim()
+        return t.ifBlank { "Done." }
     }
 
     private fun parseToolCall(text: String): Pair<String, JSONObject>? {

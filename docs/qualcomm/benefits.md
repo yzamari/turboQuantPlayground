@@ -153,6 +153,40 @@ What you can do *right now* on the Tab S9+ that you couldn't yesterday:
    this hardware, including the 4.00× compression ratio measured on the real
    Llama-3.2 KV layers.
 
+## Works for VLMs, not just text-only LLMs
+
+A KV vector is a KV vector. By the time visual tokens are sitting in the KV
+cache they've gone through the same attention/MLP layers as text tokens and
+look statistically the same to TurboQuant's rotation + Lloyd-Max compression.
+PolarQuant's data-oblivious property means we don't need calibration: every
+rotated coordinate has the same Beta distribution regardless of what modality
+it came from.
+
+VLMs are arguably a **better fit** than text-only because visual tokens flood
+the cache:
+
+| Model | Tokens per image (typical) |
+|---|---:|
+| SmolVLM-256M (verified on the Tab S9+ tonight) | ~64-256 |
+| SmolVLM-1.7B | ~256-1024 |
+| Qwen2.5-VL 3B | ~1024-4096 (high-res) |
+| Llama-3.2-Vision 11B | ~1600 |
+
+Multiply by N images in a multi-turn conversation or T frames in a video and
+the KV bandwidth pressure dominates decode time long before text-only LLMs
+hit the same regime. **Compressing the cache 4× directly attacks that
+bottleneck.**
+
+Codebooks shipped (`d ∈ {64, 128, 256, 576}` × `bits ∈ {2,3,4}`) cover the
+head dimensions used by SmolVLM-256M, SmolVLM-1.7B, Qwen2.5-VL 3B, and
+Llama-3.2-Vision. **No retraining, no calibration, no code changes** — the
+same `TurboQuantKVCache(head_dim=64, key_bits=3)` constructor works for any
+of them.
+
+The standalone `llama-mtmd-cli` already runs SmolVLM at 51 tok/s on this
+device tonight; once Path 2 lands the `llama_kv_cache_turboquant` subclass,
+every VLM in the GGUF ecosystem picks up our compression for free.
+
 ## What's still pending (and why)
 
 - **QNN/HTP activation** — needs Qualcomm's license-walled QAIRT SDK download
