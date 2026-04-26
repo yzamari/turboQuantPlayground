@@ -12,11 +12,19 @@ package com.yzamari.turboquant.assistant
  * supplied [GenCallback] from the same thread it is called on, once per
  * generated token piece.
  *
- * The same `libturboquant_jni.so` JNI library that backs [LlamaNative]
- * also backs this class; the shared library was already loaded by
- * [LlamaNative]'s static init so we don't re-load it here.
+ * Backed by the same `libturboquant_jni.so` as [LlamaNative]. We call
+ * `System.loadLibrary` from this object's static init too because the
+ * Live tab can land on this class without ever touching [LlamaNative]
+ * (user opens Live straight from a fresh launch). Without this init the
+ * JNI symbol resolver fails: *No implementation found for long
+ * MtmdNative.loadModel(...)*. `System.loadLibrary` is idempotent, so
+ * calling it from both objects is safe.
  */
 object MtmdNative {
+
+    init {
+        System.loadLibrary("turboquant_jni")
+    }
 
     /** Streaming-token callback. Implementations should return quickly —
      *  every token blocks the decoder. */

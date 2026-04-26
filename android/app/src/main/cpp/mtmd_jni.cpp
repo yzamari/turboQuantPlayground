@@ -204,7 +204,14 @@ Java_com_yzamari_turboquant_assistant_MtmdNative_loadModel(
     // ---- 3. Load the mmproj / vision encoder ---------------------------
     const double t_mm0 = now_ms();
     mtmd_context_params vparams = mtmd_context_params_default();
-    vparams.use_gpu       = gpuLayers > 0;
+    // Force the vision encoder (SigLIP / clip.cpp) onto the CPU even when
+    // the LLM is on Adreno. The combination of Adreno OpenCL + the mtmd
+    // vision graph hangs on Snapdragon 8 Gen 2 / 8 Gen 3 with this
+    // llama.cpp pin (same hang documented earlier as "q4_0 + Adreno +
+    // mtmd-cli"). SigLIP for SmolVLM-256M is ~100-300 ms on CPU on these
+    // chips, which is fine for ~1 FPS live captioning. The LLM (Llama /
+    // SmolVLM language tower) still runs on Adreno via gpuLayers.
+    vparams.use_gpu       = false;
     vparams.print_timings = false;
     vparams.n_threads     = sess->n_threads;
     vparams.warmup        = false;
