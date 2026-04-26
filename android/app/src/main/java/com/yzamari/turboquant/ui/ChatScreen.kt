@@ -3,7 +3,10 @@ package com.yzamari.turboquant.ui
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.net.Uri
+import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.FileProvider
@@ -96,8 +99,14 @@ fun ChatScreen(vm: AssistantViewModel) {
     val cameraLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.TakePicture()
     ) { success ->
-        if (success) attachedImagePath = pendingCameraPath
-        else pendingCameraPath = null
+        if (success) {
+            // The camera writes a full-resolution JPEG (~12 MP on S24 rear cam).
+            // Downscale in place — the VLM vision encoder resizes anyway, and a
+            // smaller file means less JPEG decode + cleaner clip.cpp work.
+            attachedImagePath = pendingCameraPath?.let { downscaleJpegInPlace(it) ?: it }
+        } else {
+            pendingCameraPath = null
+        }
     }
 
     val cameraPermLauncher = rememberLauncherForActivityResult(
@@ -347,15 +356,109 @@ private fun launchCamera(
     launcher.launch(uri)
 }
 
+// Longest-side cap fed to the VLM. Sweet spot: SmolVLM/SigLIP only consumes
+// 384×384, Qwen2.5-VL-3B tiles native resolution but caps tile count, so a
+// 1024-on-longest-side input preserves the detail both encoders can use while
+// cutting JPEG-decode + internal-resize cost ~10–20× vs a raw 12 MP camera
+// shot. JPEG quality 90 keeps the recompression artifact under what the
+// vision encoder cares about.
+private const val VLM_MAX_DIM   = 1024
+private const val VLM_JPEG_Q    = 90
+private const val VLM_LOG_TAG   = "VlmDownscale"
+
+/** Decode + downscale [uri] (e.g. gallery pick) into a fresh JPEG in cache. */
 private fun copyUriToCache(context: Context, uri: Uri): String? {
     return try {
-        val dir = File(context.cacheDir, "images").apply { mkdirs() }
-        val file = File(dir, "pick_${System.currentTimeMillis()}.jpg")
-        context.contentResolver.openInputStream(uri)?.use { input ->
-            FileOutputStream(file).use { out -> input.copyTo(out) }
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        context.contentResolver.openInputStream(uri)?.use {
+            BitmapFactory.decodeStream(it, null, bounds)
         }
-        file.absolutePath
-    } catch (_: Exception) { null }
+        val srcW = bounds.outWidth
+        val srcH = bounds.outHeight
+        if (srcW <= 0 || srcH <= 0) return null
+
+        val opts = BitmapFactory.Options().apply {
+            inSampleSize  = sampleSizeFor(srcW, srcH, VLM_MAX_DIM)
+            inPreferredConfig = Bitmap.Config.ARGB_8888
+        }
+        val raw = context.contentResolver.openInputStream(uri)?.use {
+            BitmapFactory.decodeStream(it, null, opts)
+        } ?: return null
+
+        val scaled = scaleToMaxDim(raw, VLM_MAX_DIM)
+        val outFile = File(File(context.cacheDir, "images").apply { mkdirs() },
+                           "pick_${System.currentTimeMillis()}.jpg")
+        FileOutputStream(outFile).use { out ->
+            scaled.compress(Bitmap.CompressFormat.JPEG, VLM_JPEG_Q, out)
+        }
+        if (scaled !== raw) raw.recycle()
+        scaled.recycle()
+        Log.i(VLM_LOG_TAG,
+              "gallery: ${srcW}x${srcH} -> max ${VLM_MAX_DIM} -> ${outFile.length() / 1024} KB")
+        outFile.absolutePath
+    } catch (t: Throwable) {
+        Log.w(VLM_LOG_TAG, "copyUriToCache failed: $t")
+        null
+    }
+}
+
+/** Downscale a JPEG file in-place. Used after [ActivityResultContracts.TakePicture]
+ *  writes a full-resolution camera capture into our FileProvider URI. Falls
+ *  back to the original path on any error so the chat still gets *some* image. */
+private fun downscaleJpegInPlace(srcPath: String): String? {
+    return try {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeFile(srcPath, bounds)
+        val srcW = bounds.outWidth
+        val srcH = bounds.outHeight
+        if (srcW <= 0 || srcH <= 0) return null
+
+        // If the camera already produced something within budget, skip the
+        // re-encode round-trip — it would just add JPEG-of-JPEG artefacts.
+        val longestSide = maxOf(srcW, srcH)
+        if (longestSide <= VLM_MAX_DIM) {
+            Log.i(VLM_LOG_TAG, "camera: ${srcW}x${srcH} already <= $VLM_MAX_DIM, skip")
+            return srcPath
+        }
+
+        val opts = BitmapFactory.Options().apply {
+            inSampleSize  = sampleSizeFor(srcW, srcH, VLM_MAX_DIM)
+            inPreferredConfig = Bitmap.Config.ARGB_8888
+        }
+        val raw = BitmapFactory.decodeFile(srcPath, opts) ?: return null
+        val scaled = scaleToMaxDim(raw, VLM_MAX_DIM)
+        FileOutputStream(srcPath).use { out ->
+            scaled.compress(Bitmap.CompressFormat.JPEG, VLM_JPEG_Q, out)
+        }
+        if (scaled !== raw) raw.recycle()
+        scaled.recycle()
+        Log.i(VLM_LOG_TAG,
+              "camera: ${srcW}x${srcH} -> max ${VLM_MAX_DIM} -> ${File(srcPath).length() / 1024} KB")
+        srcPath
+    } catch (t: Throwable) {
+        Log.w(VLM_LOG_TAG, "downscaleJpegInPlace failed: $t")
+        null
+    }
+}
+
+/** Pick the largest power-of-two `inSampleSize` whose subsampled output is
+ *  still > target on the longest side (BitmapFactory's contract). */
+private fun sampleSizeFor(w: Int, h: Int, target: Int): Int {
+    if (target <= 0) return 1
+    var s = 1
+    while ((w / (s * 2)) >= target && (h / (s * 2)) >= target) s *= 2
+    return s
+}
+
+/** Final exact-fit scale to [maxDim] preserving aspect ratio. Returns the
+ *  input bitmap unchanged when it's already within budget. */
+private fun scaleToMaxDim(src: Bitmap, maxDim: Int): Bitmap {
+    val longest = maxOf(src.width, src.height)
+    if (longest <= maxDim) return src
+    val r = maxDim.toFloat() / longest
+    val w = (src.width  * r).toInt().coerceAtLeast(1)
+    val h = (src.height * r).toInt().coerceAtLeast(1)
+    return Bitmap.createScaledBitmap(src, w, h, /*filter=*/true)
 }
 
 @Composable
