@@ -36,9 +36,22 @@ const Candidate kCandidates[] = {
      "/data/local/tmp/qnn_libs/libQnnSystem.so",
      "/data/local/tmp/qnn_libs"},
 
-    // (3) Vendor-shipped fallback. Samsung's "snap" wrapper exposes a
-    //     QNN-compatible ABI so we can probe it as a last resort. libQnnSystem
-    //     is rarely present here — we tolerate that and continue with system=null.
+    // (3) Samsung Galaxy / OneUI vendor drop. Verified on S24 Ultra (SM-S928B,
+    //     OneUI 6.1+) which ships a complete QNN runtime at /vendor/lib64/snap/
+    //     for its built-in on-device AI features — no QNN SDK install required
+    //     on these devices, just dlopen the right path.
+    //     Companion Hexagon skel lives at
+    //         /vendor/lib64/rfs/dsp/snap/libQnnHtpV75Skel.so
+    //     which the FastRPC loader picks up via ADSP_LIBRARY_PATH (set by
+    //     turboquant_jni Init when running inside our app).
+    {"/vendor/lib64/snap/libQnnHtp.so",
+     "/vendor/lib64/snap/libQnnSystem.so",
+     "/vendor/lib64/snap (Samsung OneUI bundled runtime)"},
+
+    // (4) Samsung's wrapped libsnap_qnn.so — older OneUI builds. Same ABI as
+    //     QNN's libQnnHtp but lives at the vendor lib root rather than under
+    //     snap/. libQnnSystem is rarely present at the vendor root; we
+    //     tolerate that and continue with system=null.
     {"/vendor/lib64/libsnap_qnn.so",  "/vendor/lib64/libQnnSystem.so",  "/vendor/lib64 (libsnap_qnn fallback)"},
 };
 

@@ -74,14 +74,47 @@ adb shell "LD_LIBRARY_PATH=/data/local/tmp/qnn_libs:\$LD_LIBRARY_PATH \
 Several Snapdragon devices already ship vendor QNN runtimes — handy when you
 can't push the official SDK (e.g. retail handsets):
 
-| Path                              | Notes                                  |
-|-----------------------------------|----------------------------------------|
-| `/vendor/lib64/libsnap_qnn.so`    | Samsung's wrapped QNN ("snap")         |
-| `/vendor/lib64/libcdsprpc.so`     | Hexagon RPC; required, always present  |
-| `/vendor/lib64/libQnnHtp*.so`     | Newer OEM builds may ship this directly|
+| Path                                          | Notes                                                          |
+|-----------------------------------------------|----------------------------------------------------------------|
+| `/vendor/lib64/snap/libQnnHtp.so`             | **Samsung Galaxy S24 Ultra (OneUI 6.1+)** — full QNN drop      |
+| `/vendor/lib64/snap/libQnnHtpV75Stub.so`      | Hexagon V75 stub for SD 8 Gen 3                                |
+| `/vendor/lib64/snap/libQnnSystem.so`          | Graph-system support lib                                       |
+| `/vendor/lib64/rfs/dsp/snap/libQnnHtpV75Skel.so` | Hexagon DSP skel — picked up via FastRPC `ADSP_LIBRARY_PATH`   |
+| `/vendor/lib64/libsnap_qnn.so`                | Samsung's wrapped QNN ("snap") — older OneUI builds            |
+| `/vendor/lib64/libcdsprpc.so`                 | Hexagon RPC; required, always present (vendor-public)          |
+| `/vendor/lib64/libQnnHtp*.so`                 | Newer OEM builds may ship this directly                        |
 
-`qnn_loader.cpp` searches these paths in order and warns to stderr if none
-resolve.
+`qnn_loader.cpp` probes these in priority order and warns to stderr if none resolve.
+
+> **App namespace caveat.** The Samsung-shipped runtimes under `/vendor/lib64/snap/`
+> are *not* on `/vendor/etc/public.libraries.txt`, so a normal Android app cannot
+> `dlopen()` them from its own linker namespace by default. To use them from
+> `com.yzamari.turboquant`, add the relevant entry to `AndroidManifest.xml`:
+>
+> ```xml
+> <uses-native-library android:name="libsnap_qnn.so" android:required="false"/>
+> ```
+>
+> If that turns out to be insufficient (i.e. the Samsung snap libs aren't in the
+> vendor-public allow-list at all), fall back to pushing the official QNN SDK
+> runtime to `/data/local/tmp/qnn_libs/` per the section above — that path is
+> always reachable.
+
+## Building from inside the Android Gradle project
+
+The Android app's `app/build.gradle.kts` automatically threads `QNN_SDK_ROOT`
+(env or `gradle.properties` `turboquant.qnnSdkRoot`) to the CMake configure
+step. If set, `TQ_WITH_QNN=ON` is forwarded to the libturboquant build and
+the QNN backend appears in `TurboQuantNative.listBackends()` at runtime — the
+**Bench tab** then shows it as a selectable backend chip.
+
+```sh
+# one-time per machine
+echo "turboquant.qnnSdkRoot=$HOME/sdk/qairt/2.27.0" >> android/gradle.properties
+
+# rebuild
+( cd android && ./gradlew :app:installDebug )
+```
 
 ## Numerical tolerances
 
