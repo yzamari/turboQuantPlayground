@@ -104,20 +104,63 @@ std::string token_to_piece(const llama_vocab * vocab, llama_token tok) {
     return std::string(buf, n);
 }
 
-// Build a ChatML-formatted prompt with the mtmd image marker placed inside
-// the user turn. SmolVLM-256M and Qwen2.5-VL-3B (the two VLMs the assistant
-// app supports) both expect ChatML; the image marker is replaced by image
-// tokens during mtmd_tokenize.
-std::string build_vlm_prompt(const std::string & user_text) {
+// Build a chat-template-formatted prompt with the mtmd image marker placed
+// inside the user turn. Uses the model's built-in template via
+// `llama_chat_apply_template` (public C API) — hardcoding ChatML the way an
+// earlier draft did was the cause of the live-VLM hang on Tab S9+: SmolVLM
+// uses a different chat format, so its tokenizer never produced the EOG
+// token from a ChatML prompt and the decode loop ran forever.
+//
+// Fallback to ChatML if the model has no built-in template (rare; mtmd
+// requires one anyway, since otherwise the upstream mtmd-cli also exits).
+std::string build_vlm_prompt(const llama_model * model, const std::string & user_text) {
     const char * marker = mtmd_default_marker();
-    std::string p;
-    p.reserve(user_text.size() + 80);
-    p += "<|im_start|>user\n";
-    p += marker ? marker : "<__media__>";
-    p += "\n";
-    p += user_text;
-    p += "<|im_end|>\n<|im_start|>assistant\n";
-    return p;
+
+    std::string content;
+    content.reserve(user_text.size() + 32);
+    content += marker ? marker : "<__media__>";
+    content += "\n";
+    content += user_text;
+
+    llama_chat_message msg{};
+    msg.role    = "user";
+    msg.content = content.c_str();
+
+    const char * tmpl = llama_model_chat_template(model, /*name=*/nullptr);
+
+    auto chatml_fallback = [&]() {
+        std::string p;
+        p.reserve(content.size() + 80);
+        p += "<|im_start|>user\n";
+        p += content;
+        p += "<|im_end|>\n<|im_start|>assistant\n";
+        return p;
+    };
+
+    if (!tmpl) {
+        LOGW("build_vlm_prompt: no chat template on model — falling back to ChatML");
+        return chatml_fallback();
+    }
+
+    // Probe the required buffer size, then format.
+    int32_t needed = llama_chat_apply_template(
+        tmpl, &msg, /*n_msg=*/1, /*add_ass=*/true, nullptr, 0);
+    if (needed <= 0) {
+        LOGW("build_vlm_prompt: llama_chat_apply_template probe returned %d "
+             "— falling back to ChatML", (int) needed);
+        return chatml_fallback();
+    }
+
+    std::string out(static_cast<size_t>(needed), '\0');
+    int32_t actual = llama_chat_apply_template(
+        tmpl, &msg, 1, true, out.data(), static_cast<int32_t>(out.size()));
+    if (actual <= 0) {
+        LOGW("build_vlm_prompt: llama_chat_apply_template returned %d "
+             "— falling back to ChatML", (int) actual);
+        return chatml_fallback();
+    }
+    out.resize(static_cast<size_t>(actual));
+    return out;
 }
 
 }  // namespace
@@ -204,13 +247,11 @@ Java_com_yzamari_turboquant_assistant_MtmdNative_loadModel(
     // ---- 3. Load the mmproj / vision encoder ---------------------------
     const double t_mm0 = now_ms();
     mtmd_context_params vparams = mtmd_context_params_default();
-    // Force the vision encoder (SigLIP / clip.cpp) onto the CPU even when
-    // the LLM is on Adreno. The combination of Adreno OpenCL + the mtmd
-    // vision graph hangs on Snapdragon 8 Gen 2 / 8 Gen 3 with this
-    // llama.cpp pin (same hang documented earlier as "q4_0 + Adreno +
-    // mtmd-cli"). SigLIP for SmolVLM-256M is ~100-300 ms on CPU on these
-    // chips, which is fine for ~1 FPS live captioning. The LLM (Llama /
-    // SmolVLM language tower) still runs on Adreno via gpuLayers.
+    // SigLIP on CPU even when LLM is on Adreno: granular logs (see
+    // describe()) show mtmd_helper_eval_chunks hangs forever when SigLIP
+    // is on Adreno OpenCL — confirmed on Tab S9+ (SD 8 Gen 2, Adreno 740).
+    // CPU SigLIP for SmolVLM-256M is ~100-300 ms, totally fine for live.
+    // The LLM keeps Adreno via gpuLayers (separate path inside eval_chunks).
     vparams.use_gpu       = false;
     vparams.print_timings = false;
     vparams.n_threads     = sess->n_threads;
@@ -291,12 +332,15 @@ Java_com_yzamari_turboquant_assistant_MtmdNative_describe(
          (unsigned) mtmd_bitmap_get_ny(bmp));
 
     // ---- Tokenize prompt + image into mtmd chunks ----------------------
-    const std::string prompt = build_vlm_prompt(userText);
+    const std::string prompt = build_vlm_prompt(sess->model, userText);
+    LOGI("describe: prompt (%zu chars): %s",
+         prompt.size(), prompt.size() > 200 ? "<truncated>" : prompt.c_str());
     mtmd_input_text text{};
     text.text          = prompt.c_str();
     text.add_special   = true;
     text.parse_special = true;
 
+    LOGI("describe: tokenizing...");
     mtmd_input_chunks * chunks = mtmd_input_chunks_init();
     const mtmd_bitmap * bmps[1] = { bmp };
     if (mtmd_tokenize(sess->vision, chunks, &text, bmps, 1) != 0) {
@@ -308,6 +352,8 @@ Java_com_yzamari_turboquant_assistant_MtmdNative_describe(
     }
     sess->last.n_image_tokens = (int) mtmd_helper_get_n_tokens(chunks);
     sess->last.n_prompt       = (int) mtmd_helper_get_n_pos(chunks);
+    LOGI("describe: tokenized — n_image_tokens=%d n_prompt=%d, eval_chunks…",
+         sess->last.n_image_tokens, sess->last.n_prompt);
 
     // ---- Eval all chunks (image + text) into KV ------------------------
     const double t_img0 = now_ms();
@@ -330,6 +376,8 @@ Java_com_yzamari_turboquant_assistant_MtmdNative_describe(
     }
     sess->n_past             = new_n_past;
     sess->last.image_eval_ms = now_ms() - t_img0;
+    LOGI("describe: image eval done in %.1f ms (new_n_past=%d), starting decode…",
+         sess->last.image_eval_ms, (int) new_n_past);
 
     // ---- Decode loop: sample, emit, advance KV -------------------------
     const llama_vocab * vocab = llama_model_get_vocab(sess->model);
@@ -338,6 +386,7 @@ Java_com_yzamari_turboquant_assistant_MtmdNative_describe(
     int n_decoded = 0;
     for (int i = 0; i < (int) maxTokens; ++i) {
         const llama_token tok = llama_sampler_sample(sess->sampler, sess->ctx, -1);
+        if (i < 4) LOGI("describe: sampled tok=%d at step=%d", (int) tok, i);
         if (llama_vocab_is_eog(vocab, tok)) break;
 
         const std::string piece = token_to_piece(vocab, tok);
