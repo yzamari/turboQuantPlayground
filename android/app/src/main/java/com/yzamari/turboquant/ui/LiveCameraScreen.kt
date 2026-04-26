@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
+import android.os.Build
 import android.util.Log
 import android.util.Size
 import android.view.ViewGroup.LayoutParams
@@ -135,18 +136,38 @@ fun LiveCameraScreen(vm: AssistantViewModel) {
     Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
 
         // ---- PreviewView + analyzer ------------------------------------
+        // Tab S9+ (board "kalama") + every other unrecognised SoC routes
+        // SigLIP/SmolVLM through CPU because the upstream mtmd helper hangs
+        // on Adreno 740 (see VlmRunner.isAdrenoVlmKnownGood). One frame on
+        // CPU ≈ 165 s; without on-screen feedback the Live tab looks frozen
+        // for the first three minutes. Show an explicit "Encoding…" status
+        // the moment a frame is in flight so the user knows the analyzer
+        // is grinding rather than dead.
+        val cpuFallback = !isAdrenoVlmKnownGoodBoard()
         CameraPreviewView(
             paused        = paused,
             useFrontCam   = useFrontCam,
             vlmRunner     = vm.vlmRunner,
             scope         = scope,
+            onFrameStart  = {
+                caption = if (framesAnalyzed == 0 && cpuFallback) {
+                    "Encoding first frame on CPU — about 2½ min on this SoC. " +
+                        "Subsequent frames take a similar amount of time. " +
+                        "(Adreno+mtmd hang at our pinned llama.cpp commit; " +
+                        "S24 Ultra runs this on Adreno and is ~10× faster.)"
+                } else if (cpuFallback) {
+                    "Encoding image on CPU…"
+                } else {
+                    "Encoding image…"
+                }
+            },
             onAnalyzedFrame = { ms, tps ->
                 lastFrameMs    = ms
                 lastDecodeTps  = tps
                 framesAnalyzed += 1
             },
-            onCaption     = { piece, isFinal ->
-                caption = if (isFinal) piece else piece
+            onCaption     = { piece, _ ->
+                caption = piece
             },
             modifier      = Modifier.fillMaxSize(),
         )
@@ -257,6 +278,7 @@ private fun CameraPreviewView(
     useFrontCam: Boolean,
     vlmRunner: VlmRunner,
     scope: CoroutineScope,
+    onFrameStart: () -> Unit,
     onAnalyzedFrame: (frameMs: Long, decodeTps: Float) -> Unit,
     onCaption: (text: String, isFinal: Boolean) -> Unit,
     modifier: Modifier = Modifier,
@@ -314,6 +336,9 @@ private fun CameraPreviewView(
                 // Hand the JPEG path to the VLM. Returns when generation
                 // ends, then we release the gate so the analyzer accepts
                 // the next frame.
+                scope.launch(Dispatchers.Main) {
+                    onFrameStart()
+                }
                 scope.launch(Dispatchers.IO) {
                     captionBuilder.setLength(0)
                     val result = runCatching {
@@ -412,4 +437,14 @@ private fun parseDecodeTps(statsJson: String): Float {
     if (statsJson.isBlank()) return 0f
     val m = Regex("\"decode_tok_per_sec\":([0-9.]+)").find(statsJson)
     return m?.groupValues?.get(1)?.toFloatOrNull() ?: 0f
+}
+
+/** Mirror of VlmRunner.isAdrenoVlmKnownGood — kept private to the UI so the
+ *  Live screen can tell the user upfront when this SoC will route VLM
+ *  through CPU and a single frame will take ~2½ min. */
+private fun isAdrenoVlmKnownGoodBoard(): Boolean {
+    val board = Build.BOARD.lowercase()
+    if (board.startsWith("pineapple")) return true
+    if (board.startsWith("sun") || board.startsWith("8elite")) return true
+    return false
 }
