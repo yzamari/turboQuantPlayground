@@ -1,0 +1,97 @@
+# SigLIP -> QNN .bin conversion (Path C, Phase 1).
+#
+# The macOS dev box can't run the QAIRT converter (Qualcomm ships Linux
+# binaries only). This workflow runs on a Linux GitHub-hosted runner,
+# generates the FP32 reference + intermediates via cpp/tools/siglip_block_ref.py,
+# converts the SigLIP-base weights to a QNN HTP .bin, and uploads the
+# result as a workflow artifact.
+#
+# **Status: stub.** The QAIRT install step is a placeholder until we
+# have either a Qualcomm-provided Docker image we can pull, or a
+# self-hosted runner with the SDK pre-installed. See
+# `cpp/backends/qnn_htp/README.md` (SigLIP scaffold section) for the
+# context.
+
+name: siglip-convert
+
+on:
+  workflow_dispatch:    # manual trigger
+  push:
+    branches:
+      - "path-c/**"
+    paths:
+      - "cpp/tools/siglip_block_ref.py"
+      - "cpp/backends/qnn_htp/qnn_siglip.*"
+      - ".github/workflows/siglip-convert.yml"
+
+jobs:
+  convert:
+    runs-on: ubuntu-22.04   # QAIRT 2.27.x is built against glibc 2.31+
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python deps for the FP32 reference
+        run: |
+          python -m pip install --upgrade pip
+          # The reference loads HuggingFace SigLIP-base. CPU torch is
+          # plenty for a single block.
+          pip install --quiet torch --index-url https://download.pytorch.org/whl/cpu
+          pip install --quiet transformers numpy
+
+      - name: Generate FP32 reference + golden .bin
+        run: |
+          python cpp/tools/siglip_block_ref.py
+          ls -la cpp/tests/golden/
+
+      # ---------------------------------------------------------------
+      # QAIRT converter — placeholder. Three viable paths:
+      #   (a) self-hosted runner with QAIRT pre-installed,
+      #   (b) Qualcomm-provided Docker image we `docker pull` here,
+      #   (c) a tarball uploaded as a private GitHub release asset that
+      #       we pull with a deploy token.
+      # All three need Qualcomm developer-account access and license
+      # acceptance, which can't be automated in this stub.
+      # ---------------------------------------------------------------
+      - name: Install QAIRT 2.27.x
+        run: |
+          # TODO: replace with actual QAIRT install once SDK access is set up
+          echo "::warning::QAIRT install is a stub — see .github/workflows/siglip-convert.yml"
+          echo "Expected outcome: QNN_SDK_ROOT=/opt/qairt/2.27.x exists with"
+          echo "  include/QNN/QnnInterface.h, lib/x86_64-linux-clang/, bin/qnn-onnx-converter."
+
+      - name: Export SigLIP block 0 to ONNX
+        run: |
+          # TODO: replace with actual QAIRT install once SDK access is set up
+          # python cpp/tools/siglip_export_onnx.py \
+          #     --output build/siglip_block_d768_h12.onnx
+          echo "::warning::ONNX export is a stub"
+
+      - name: Convert ONNX -> QNN HTP .bin
+        run: |
+          # TODO: replace with actual QAIRT install once SDK access is set up
+          # $QNN_SDK_ROOT/bin/qnn-onnx-converter \
+          #     --input_network build/siglip_block_d768_h12.onnx \
+          #     --output_path build/siglip_block_d768_h12.bin \
+          #     --target_runtime htp
+          echo "::warning::QNN .bin conversion is a stub"
+
+      - name: Upload golden + (future) QNN .bin
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: siglip-block-d768-h12
+          path: |
+            cpp/tests/golden/siglip_block_d768_h12.bin
+            cpp/tests/golden/siglip_block_d768_h12.weights.bin
+            cpp/tests/golden/siglip_block_d768_h12.manifest.json
+            # build/siglip_block_d768_h12.bin       # uncomment when QAIRT lands
+          if-no-files-found: warn
+          retention-days: 14

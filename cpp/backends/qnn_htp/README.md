@@ -128,3 +128,55 @@ echo "turboquant.qnnSdkRoot=$HOME/sdk/qairt/2.27.0" >> android/gradle.properties
 - `mse_score_graph` is stubbed; it currently delegates to NEON. Building it on
   HTP needs a custom-op for the bit-unpack-then-gather fused kernel — tracked
   in `qnn_graph.hpp`.
+
+## SigLIP scaffold (Phase 1)
+
+The `qnn_siglip.{hpp,cpp}` files land the framework for a SigLIP-base vision
+encoder running on Hexagon HTP — the `Path C` plan. **Phase 1 is scaffolding
+only**: every method currently throws `std::logic_error("unimplemented")`.
+Subsequent commits on `path-c/qnn-siglip-phase1` fill in the seven build
+steps (LayerNorm, Q/K/V triple, attention, residual, LN2, MLP+GELU,
+residual). See `docs/path-c-qnn-siglip-design.md` for the full design.
+
+### macOS host limitation
+
+The Phase 1 test pipeline is:
+
+1. Run `cpp/tools/siglip_block_ref.py` to load HuggingFace `SigLIP-base-patch16-224`,
+   capture FP32 intermediates for block 0, dump them to
+   `cpp/tests/golden/siglip_block_d768_h12.bin`.
+2. Convert the same block weights to a QNN `.bin` via the QAIRT converter.
+3. Build the C++ test with `-DTQ_WITH_QNN=ON -DQNN_SDK_ROOT=...` and run
+   `tq_qnn_siglip_block_test` — cosine vs the golden ref must be ≥ 0.99.
+
+Step 2 is a hard blocker on macOS: **the QAIRT 2.27.x converter binaries
+ship Linux x86_64 only**. Three viable workarounds:
+
+| Option | Description | Tradeoff |
+|---|---|---|
+| **A. Docker on macOS** | Wrap the converter in a Linux container. Build the image from a Qualcomm-provided base. | Local iteration; needs Docker Desktop + Qualcomm SDK acceptance inside the image. |
+| **B. GitHub Actions Linux runner** | `siglip-convert.yml` workflow auto-converts on push, uploads the `.bin` as an artifact. | Hands-off CI; first install of QAIRT inside the runner is non-trivial (see TODO in the workflow). |
+| **C. Linux pair box** | Run `siglip_block_ref.py` + the QAIRT converter on a Linux host, `rsync` the `.bin` back. | Simplest; needs hardware. |
+
+Recommended: **B for CI + A for fast iteration**. See
+`.github/workflows/siglip-convert.yml`.
+
+### Running the (currently failing) test
+
+The test executable builds on macOS hosts but *will fail* because
+`QnnSigLipBlock::forward()` is a stub. It is NOT registered with `ctest`
+to keep CI green — invoke it manually:
+
+```sh
+cmake -S cpp -B cpp/build-host -DCMAKE_BUILD_TYPE=Release
+cmake --build cpp/build-host -j
+
+# Generate the golden ref on a Linux box first (or pull the artifact from
+# the siglip-convert workflow), then:
+./cpp/build-host/cpp/tests/tq_qnn_siglip_block_test
+```
+
+Expected Phase 1 output: a single line `forward() threw (expected at
+Phase 1): QnnSigLipBlock::forward unimplemented — Phase 1 scaffold only.`
+followed by `1 / 1 checks passed (0 failures)` — that's the harness
+catching the `std::logic_error` and treating it as the contract.

@@ -46,6 +46,11 @@ add_library(tq_backend_qnn_htp STATIC
     qnn_loader.cpp
     qnn_graph.cpp
     qnn_htp_backend.cpp
+    # Path C, Phase 1 scaffold — single SigLIP transformer block on HTP.
+    # All step methods currently throw std::logic_error; subsequent commits
+    # in the path-c/qnn-siglip-phase1 branch implement them op by op.
+    # See cpp/backends/qnn_htp/qnn_siglip.hpp for the step plan.
+    qnn_siglip.cpp
 )
 
 target_include_directories(tq_backend_qnn_htp

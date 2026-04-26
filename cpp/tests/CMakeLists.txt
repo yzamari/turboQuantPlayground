@@ -25,3 +25,23 @@ add_test(NAME parity COMMAND tq_parity_test)
 add_executable(tq_attention_turboquant_test attention_turboquant_test.cpp)
 target_link_libraries(tq_attention_turboquant_test PRIVATE turboquant)
 add_test(NAME attention_turboquant COMMAND tq_attention_turboquant_test)
+
+# QnnSigLipBlock parity — Path C, Phase 1 scaffold.
+#
+# Compares one transformer block of SigLIP-base on QNN HTP against the
+# FP32 reference produced by cpp/tools/siglip_block_ref.py. The .bin
+# golden has to be regenerated on a Linux box with QAIRT — see the
+# "SigLIP scaffold (Phase 1)" section of cpp/backends/qnn_htp/README.md
+# and the .github/workflows/siglip-convert.yml workflow.
+#
+# Intentionally NOT added to ctest at Phase 1 — QnnSigLipBlock::forward()
+# is currently a std::logic_error stub, so `ctest` would always go red.
+# Run manually:
+#     ./cpp/build-host/cpp/tests/tq_qnn_siglip_block_test
+# Once steps 1-7 in qnn_siglip.cpp are filled in, uncomment the
+# add_test() line below and the test joins the regular suite.
+add_executable(tq_qnn_siglip_block_test qnn_siglip_block_test.cpp)
+target_link_libraries(tq_qnn_siglip_block_test PRIVATE turboquant)
+target_compile_definitions(tq_qnn_siglip_block_test PRIVATE
+    TQ_GOLDEN_DIR="${CMAKE_SOURCE_DIR}/tests/golden")
+# add_test(NAME qnn_siglip_block COMMAND tq_qnn_siglip_block_test)  # Phase 1: stub throws
