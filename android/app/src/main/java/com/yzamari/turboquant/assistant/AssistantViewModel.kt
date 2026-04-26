@@ -42,6 +42,9 @@ class AssistantViewModel(app: Application) : AndroidViewModel(app) {
     var ttsEnabled by mutableStateOf(true)
     var threads    by mutableStateOf(4)
     var contextSize by mutableStateOf(2048)
+    /** 0 = FP16 KV (baseline), 1 = q4_0 KV (TurboQuant cousin, 4× compressed), 2 = q8_0 (2×). */
+    var kvType by mutableStateOf(1)
+    var gpuLayers by mutableStateOf(99)  // offload everything to Adreno by default
     var statsJson  by mutableStateOf("")
         private set
     /** Maximum context size advertised by the active model (in tokens). */
@@ -106,7 +109,7 @@ class AssistantViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             val h = withContext(Dispatchers.IO) {
                 runCatching {
-                    LlamaNative.loadModel(path, contextSize, threads)
+                    LlamaNative.loadModel(path, contextSize, threads, kvType, gpuLayers)
                 }.onFailure { Log.e(TAG, "loadModel threw", it) }
                  .getOrDefault(0L)
             }
@@ -117,9 +120,19 @@ class AssistantViewModel(app: Application) : AndroidViewModel(app) {
                 assistant = Assistant(h, dispatcher,
                     maxToolHops = 3, maxTokensPerTurn = 512)
                 maxContext = contextSize
-                modelStatus = "Loaded ${File(path).name} (ctx=$contextSize, threads=$threads)"
+                val kvLabel = when (kvType) {
+                    1    -> "q4_0 KV (4× compressed, TurboQuant cousin)"
+                    2    -> "q8_0 KV (2× compressed)"
+                    else -> "FP16 KV (baseline, no compression)"
+                }
+                val gpuLabel = if (gpuLayers > 0) "GPU=Adreno (ngl=$gpuLayers)"
+                               else                "CPU only"
+                modelStatus = "Loaded ${File(path).name} · ctx=$contextSize · $kvLabel · $gpuLabel"
                 messages.add(ChatEntry.System(
-                    "Model loaded: ${File(path).name} · max context = $contextSize tokens"
+                    "Model loaded: ${File(path).name}\n" +
+                    "• max context = $contextSize tokens\n" +
+                    "• KV cache: $kvLabel\n" +
+                    "• compute: $gpuLabel"
                 ))
             }
             loading = false

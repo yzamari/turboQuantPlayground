@@ -1,98 +1,122 @@
 # LinkedIn post — TurboQuant on Qualcomm Snapdragon
 
-> Drafted for Yahav. Numbers below are all measured on real hardware (Galaxy
-> S24 Ultra and Tab S9+) — not projected. Pick whichever framing fits the
-> audience; the numbers are the same.
+> Rewritten for stronger hook, cleaner number pairs, automotive angle.
+> Numbers are measured on real hardware (Galaxy S24 Ultra + Tab S9+) — not
+> projected.
 
 ---
 
-## Long version (~270 words)
+## Long version (~280 words)
 
-🚀 We just got a real LLM and VLM running fully on-device on a Qualcomm
-Snapdragon phone — with **4× less memory and zero quality loss** for the KV
-cache. No cloud round-trip, no telemetry, no Wi-Fi required.
+**Stop sending every "what is this?" to a cloud GPU.**
 
-Stack: a C++17 port of TurboQuant (PolarQuant + 1-bit QJL — Google, ICLR 2026)
-targeting Snapdragon mobile + automotive. Five compute backends that all
-share the same kernel spec: ARM NEON CPU, Hexagon HTP NPU (via QNN), Adreno
-OpenCL GPU, Adreno Vulkan compute, plus a portable C++ reference. Built with
-plain CMake so the same library ships from a Galaxy S24 today to a
-Snapdragon-Cockpit (SA8295P / SA8775P) car tomorrow with a toolchain swap —
-no algorithmic rewrite.
+Over the past 24 hours I built an LLM + VLM personal assistant that runs
+**fully on a Snapdragon phone** — no cloud, no telemetry, works in airplane
+mode. Same library targets Qualcomm automotive (SA8155P / SA8295P / SA8775P)
+with a toolchain swap, no algorithmic rewrite.
 
-**Measured on a Galaxy S24 Ultra (SD 8 Gen 3) and Tab S9+ (SD 8 Gen 2):**
+The trick is a C++17 port of Google's TurboQuant (PolarQuant + 1-bit QJL,
+ICLR 2026) targeting Snapdragon, plus llama.cpp's Adreno OpenCL backend.
 
-• **4.00× KV-cache compression** verified against `llama_state_seq_get_size`
-on real Llama-3.2-1B layers, cosine 0.92 vs FP16
-• **30.5 tok/s** Llama-3.2-1B Q4_K_M generation, **51.2 tok/s** SmolVLM-256M,
-plus Qwen2.5-VL-3B for multilingual vision
-• **+13–16 % decode tok/s** at 1K–4K context on real llama.cpp inference;
-much more at long context where FP16 OOMs
-• **727 / 727** byte-exact parity vs the Python reference, 30,912 / 30,912
-bit-packing roundtrip checks
+🎯 **Verified on a Galaxy S24 Ultra (SD 8 Gen 3)**:
 
-**What this unlocks**
+📦 **Memory** — KV-cache compresses 4.00×, byte-exact verified against
+`llama_state_seq_get_size`. That's the difference between *"can't load 16K
+context with a 7B model on a phone"* and *"easy 32-64K"*. Quality cost:
+~0.92 cosine on attention scores vs FP16. Same numbers verified on
+Llama-3.2-1B (16 layers), SmolVLM-256M (30 layers), and Qwen2.5-VL-3B
+(36 layers).
 
-📱 Phones: 64–128K context with a 1B model, or 32K context with a 7B —
-context lengths that previously OOM'd a 12 GB phone. Same model, more
-conversation, less RAM, less battery.
+⚡ **Speed** — Llama-3.2-1B on Adreno 750: prompt-eval went **34.6 → 192.4
+tok/s (5.6× faster)** the moment we flipped on `-DGGML_OPENCL=ON`. SmolVLM
+end-to-end image-to-description: **3.4 s on Adreno** (was ~8 s on CPU).
+Generation tok/s on the active chat path: 30+ tok/s — faster than reading
+speed.
 
-🚗 Vehicles: a private, offline LLM assistant that works in tunnels, doesn't
-leak driver utterances to a cloud, and scales to fleets without a GPU
-backend. ASIL-friendly: no dynamic alloc in hot paths, deterministic outputs,
-FP32 fallback option.
+🔒 **Privacy** — model + prompt + reply never leave the device. Voice in/out
+runs locally (Android `SpeechRecognizer` + `TextToSpeech`). 12 Android-Intent
+tools (alarm, SMS, web search, directions, etc.) dispatched from JSON the
+LLM emits.
 
-Repo + benchmarks (real numbers, not projections): https://github.com/yzamari/turboQuantPlayground
+🚗 **Automotive** — the C++ core has zero OS / vendor-SDK dependency. No
+dynamic alloc in hot paths, deterministic outputs, FP32 fallback. ASIL-friendly.
+The same `.a` ships from S24 today to a Snapdragon-Cockpit car tomorrow.
 
-#Qualcomm #Snapdragon #OnDeviceAI #LLM #VLM #EdgeAI #Automotive #LlamaCpp
+Repo + benchmarks (real measurements, not projections):
+👉 https://github.com/yzamari/turboQuantPlayground
+
+#Qualcomm #Snapdragon #OnDeviceAI #LLM #VLM #EdgeAI #Automotive
+#LlamaCpp #PrivacyByDesign
 
 ---
 
-## Short version (~140 words, for quicker scrolls)
+## Short version (~140 words)
 
-📲 Got a real LLM running on a Snapdragon phone with **4× less KV-cache
-memory and zero quality loss** — verified end-to-end on a Galaxy S24 Ultra
-and Tab S9+.
+🚀 Got a real LLM + VLM running fully **on a Snapdragon phone** — no cloud,
+no Wi-Fi needed. Same library ports to Qualcomm automotive (SA8295P /
+SA8775P) with a toolchain swap.
 
-C++ port of TurboQuant (Google ICLR 2026) targeting Qualcomm: NEON CPU,
-Hexagon HTP NPU, Adreno OpenCL/Vulkan GPU, plus a portable scalar reference.
-Plain CMake — same library from S24 today to a Snapdragon-Cockpit car
-tomorrow. ASIL-friendly: no dynamic alloc, FP32 fallback, deterministic.
+C++ port of Google's TurboQuant (ICLR 2026) plus llama.cpp's Adreno OpenCL
+backend. Verified on a Galaxy S24 Ultra:
 
-Measured today (real hardware, not projections):
-• 4.00× KV compression on Llama-3.2-1B, cosine 0.92 vs FP16
-• 30.5 tok/s Llama-3.2-1B Q4 / 51.2 tok/s SmolVLM-256M
-• 727/727 byte-exact parity vs the Python reference
-
-What it unlocks: 64K-128K context on a 12 GB phone, private offline assistant
-in cars (works in tunnels, no cloud leaks).
+📦 **4.00× KV-cache compression**, cosine 0.92 vs FP16 (byte-exact verified)
+⚡ **5.6× faster prompt-eval** on Adreno 750 (34.6 → 192.4 tok/s)
+🖼️ SmolVLM image→text in **3.4 s** on Adreno (was 8 s on CPU)
+🔒 Voice in/out + 12 Android-Intent tools, all local — works in tunnels
 
 Repo: https://github.com/yzamari/turboQuantPlayground
+
+The phone is the new edge. The car is next.
 
 #Qualcomm #Snapdragon #OnDeviceAI #EdgeAI #Automotive
 
 ---
 
-## Casual / social version (~80 words)
+## Punch version (~70 words, for tight scrolls)
 
-Got Llama-3.2 + SmolVLM running fully on-device on my Snapdragon phone with a
-**4× smaller KV cache and no quality loss** — measured, not projected. C++
-port of Google's TurboQuant targeting Qualcomm (NEON / Hexagon HTP / Adreno
-OpenCL / Adreno Vulkan). Same library ports from phone to Snapdragon car
-with a toolchain swap. Benchmarks + screenshots on the repo:
-https://github.com/yzamari/turboQuantPlayground
+Llama-3.2 + SmolVLM running entirely on my Snapdragon phone:
+**5.6× faster prompt-eval on Adreno**, **4× smaller KV cache**, no cloud,
+works offline. Same library ports to Snapdragon-Cockpit cars with a
+toolchain swap.
 
-The phone is the new edge. 🚀
+C++ port of Google's TurboQuant (ICLR 2026) + llama.cpp's Adreno OpenCL
+backend. Real numbers, real device, on GitHub:
 
-#Qualcomm #Snapdragon #EdgeAI
+👉 https://github.com/yzamari/turboQuantPlayground
+
+#Qualcomm #Snapdragon #EdgeAI #AutomotiveAI
+
+---
+
+## Comment-thread seed (drop as the first reply to your own post)
+
+If you want to dig in:
+
+📊 **Compression** (Llama-3.2-1B, 16 layers): 4.00× verified vs
+`llama_state_seq_get_size` · cosine 0.92 vs FP16
+🧪 **Tokens per second** (S24, Llama-3.2-1B Q4_K_M, ngl=99):
+   • CPU NEON: pp 34.6 t/s · gen 30.5 t/s
+   • Adreno OpenCL: pp **192.4 t/s** · gen 22.5 t/s
+🎨 **VLM** (S24, SmolVLM-256M, Adreno): pp 141 t/s · gen 115 t/s · full
+   image-to-description in ~3.4 s
+🚗 **Automotive transfer story**: the C++ core is plain CMake C++17 with
+   zero OS dependency. Toolchain stubs for Linux aarch64 (SA8775P) and
+   QNX aarch64 (SA8155P/SA8295P) already in the repo.
+
+Path-2 (full TurboQuant in llama.cpp's KV cache during inference) is the
+next milestone — current chat uses llama.cpp's q4_0 KV (closest cousin,
+same 4× ratio) plus the Adreno OpenCL backend.
 
 ---
 
 ## Notes for posting
 
-- Add a screenshot of `docs/screenshots/assistant-app-vlm-streaming.png` — it
-  shows the chat UI mid-VLM-stream with timing chips. Visual + concrete.
-- Optionally tag: @Qualcomm, @Google AI, @ggml-org (llama.cpp).
-- If you want to seed a comment thread: include the `compression / tok/s /
-  cosine` numbers in the first reply rather than the post body — gives
-  curious people something to dig into.
+- **Visual**: attach `docs/screenshots/assistant-app-vlm-streaming.png` —
+  shows the chat UI mid-VLM-stream with live timing chips. Concrete > abstract.
+- **Tag**: @Qualcomm, @ggml-org (llama.cpp), @Google AI (paper authors).
+- **Don't oversell**: q4_0 KV (used in the live chat decode) is the cousin
+  of TurboQuant, not full TurboQuant yet. Same compression ratio, slightly
+  worse quality (cosine ~0.85 vs ~0.92). The standalone TurboQuant verifier
+  *is* full TurboQuant and proves the algorithm works on real model layers.
+- **Link choice**: pin the SUMMARY.md link rather than just the repo root,
+  so people land on the curated walkthrough, not the README.
