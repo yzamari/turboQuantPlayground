@@ -103,6 +103,16 @@ android {
         // bundled binaries (we ship llama-mtmd-cli as libllama-mtmd-cli.so).
         jniLibs {
             useLegacyPackaging = true
+            // libOpenCL.so in jniLibs/ is the Khronos ICD-loader stub used at
+            // *link time* only — at runtime we want the device's vendor loader
+            // (e.g. /vendor/lib64/libOpenCL.so on Snapdragon) which actually
+            // knows how to find libOpenCL_adreno.so. Bundling our stub wins
+            // over the vendor lib in the linker namespace and silently CPU-
+            // falls back. Exclude it from the APK and rely on
+            // <uses-native-library android:name="libOpenCL.so"/> in
+            // AndroidManifest to grant the namespace access. The library still
+            // exists on disk in jniLibs for CMake's link step.
+            excludes += "**/libOpenCL.so"
         }
     }
 }
