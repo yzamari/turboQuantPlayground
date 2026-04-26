@@ -63,6 +63,33 @@ llama serialized seq : 0.38 MB
 Source: `cpp/bench/results/llamacpp/tabs9p-llama32-1b-realmodel.txt`.
 The 4.00× ratio is byte-exact against llama.cpp's internal serialization.
 
+## Real TurboQuant ⇄ SmolVLM-256M KV-cache (vision-language) on the Tab S9+
+
+Same tool, same backend — just pointed at the SmolVLM weights. Confirms
+TurboQuant works for VLMs unchanged.
+
+```
+$ ./llama-turboquant-kv -m SmolVLM-256M-Instruct-Q8_0.gguf \
+    -p "Describe the image in one sentence about a cat." -n 1 -t 8 -c 512
+
+=== summary (30 layers @ seq_len=10, head_dim=64, BH=3, key_bits=3, value_bits=2) ===
+total fp16 KV bytes  : 0.22 MB
+total TurboQuant KV  : 0.05 MB
+compression ratio    : 4.00x
+avg cosine(scores)   : 0.9131
+avg cosine(weights)  : 0.9482
+avg rel_l2(output)   : 0.5170
+avg encode time      : 0.20 ms / layer
+avg turboquant attn  : 0.01 ms / layer
+```
+
+Identical compression ratio and similar quality to Llama-3.2-1B (cosine 0.91-0.92
+in both). PolarQuant's data-oblivious property means we don't need separate
+codebooks for "vision" tokens — by the time visual features are in the KV cache
+they look statistically the same as text.
+
+Source: `cpp/bench/results/llamacpp/tabs9p-smolvlm-256m-turboquant-kv.txt`.
+
 ## Numerical correctness — bit-exact vs Python reference
 
 `tq_parity_test` runs against a golden corpus produced by `cpp/tools/gen_golden.py`
