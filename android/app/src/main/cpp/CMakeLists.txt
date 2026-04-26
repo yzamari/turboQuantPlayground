@@ -100,6 +100,7 @@ endif()
 add_library(turboquant_jni SHARED
     turboquant_jni.cpp
     llama_jni.cpp
+    mtmd_jni.cpp
     ${CMAKE_SOURCE_DIR}/../../../../../cpp/bench/baseline_kv_cache.cpp
 )
 
@@ -107,12 +108,15 @@ target_include_directories(turboquant_jni PRIVATE
     ${CMAKE_SOURCE_DIR}/../../../../../cpp/bench
 )
 
-# llama / ggml targets export their public headers via INTERFACE.
+# llama / ggml / mtmd targets export their public headers via INTERFACE.
+# mtmd backs the persistent VLM session in mtmd_jni.cpp (replaces the old
+# Runtime.exec("libllama-mtmd-cli.so") fork-per-image hack in VlmRunner).
 target_link_libraries(turboquant_jni
     PRIVATE
         turboquant
         llama
         ggml
+        mtmd
         log
         android
 )
