@@ -1,6 +1,7 @@
 package com.yzamari.turboquant.assistant
 
 import android.content.Context
+import android.os.Build
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -87,7 +88,10 @@ class VlmRunner(private val ctx: Context) {
     data class Result(val reply: String, val stats: String)
 
     /** Stream the VLM's tokens to a callback as they appear. Lazy-loads the
-     *  native session on first call (or after [activeModel] changed). */
+     *  native session on first call (or after [activeModel] changed).
+     *  `threads=8` matches the big-core count on SD 8 Gen 2 / Gen 3, which
+     *  is what we want when the VLM falls back to CPU due to the
+     *  Adreno+mtmd hang on Tab S9+. */
     suspend fun describe(
         imagePath: String,
         prompt: String = "Describe this image in detail.",
@@ -111,20 +115,24 @@ class VlmRunner(private val ctx: Context) {
             val mmprojPath = File(files, sel.mmprojFile).absolutePath
             Log.i(TAG, "loading native VLM session: ${sel.displayName}")
             val tLoadStart = System.currentTimeMillis()
-            // Live VLM on Tab S9+ — pure CPU (gpuLayers=0, FP16 KV).
-            // Bisected the eval_chunks hang on 2026-04-26: any Adreno
-            // backend (LLM-side OR SigLIP-side) deadlocks
-            // mtmd_helper_eval_chunks on Tab S9+ (SD 8 Gen 2, Adreno 740)
-            // with this llama.cpp pin. Pure CPU completes correctly.
-            // SmolVLM-256M on 4 CPU threads is ~30 tok/s, so a 60-token
-            // caption finishes in ~2 s — the live tab still gets ~0.5 FPS,
-            // works in airplane mode, no Adreno hang.
+            // Pick gpuLayers based on the SoC. The mtmd vision pipeline
+            // hangs in mtmd_helper_eval_chunks on Adreno 740 / Snapdragon 8
+            // Gen 2 ("kalama" — Galaxy Tab S9+) at our pinned llama.cpp
+            // commit; verified by reproducing the same hang with
+            // upstream's stock llama-mtmd-cli on the same device. Adreno
+            // 750 / Snapdragon 8 Gen 3 ("pineapple" — Galaxy S24 Ultra)
+            // works fine. Default conservatively to CPU on anything we
+            // haven't allow-listed — slower but correct.
+            val gpuOk = isAdrenoVlmKnownGood()
+            val gpuLayersForVlm = if (gpuOk) 99 else 0
+            Log.i(TAG, "SoC board='${Build.BOARD}' → gpuLayers=$gpuLayersForVlm " +
+                       "(vlm-on-Adreno ${if (gpuOk) "OK" else "broken — falling back to CPU"})")
             nativeHandle = MtmdNative.loadModel(
                 modelPath  = modelPath,
                 mmprojPath = mmprojPath,
                 contextSize = 4096,
                 threads    = threads,
-                gpuLayers  = 0,
+                gpuLayers  = gpuLayersForVlm,
                 kvType     = 0,
             )
             val tLoad = System.currentTimeMillis() - tLoadStart
@@ -191,6 +199,20 @@ class VlmRunner(private val ctx: Context) {
             if (tps != null && nDec != null) append(" · gen ${nDec}t @ ${"%.1f".format(tps)} tok/s")
             append(" · $modelLabel")
         }
+    }
+
+    /** SoC allow-list for running mtmd's vision graph on Adreno. Tracks
+     *  devices where we've actually seen the pipeline complete a frame
+     *  without hanging in `mtmd_helper_eval_chunks`. Anything else falls
+     *  back to CPU. */
+    private fun isAdrenoVlmKnownGood(): Boolean {
+        val board = Build.BOARD.lowercase()
+        // Snapdragon 8 Gen 3 (S24 Ultra) — works.
+        if (board.startsWith("pineapple")) return true
+        // Snapdragon 8 Elite — assumed-good (newer than known-good Gen 3).
+        if (board.startsWith("sun") || board.startsWith("8elite")) return true
+        // Known-bad: SD 8 Gen 2 (Tab S9+) — board "kalama" — falls through.
+        return false
     }
 
     companion object {
