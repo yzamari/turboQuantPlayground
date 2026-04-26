@@ -24,8 +24,18 @@ object LlamaNative {
         fun onToken(piece: String)
     }
 
-    /** Loads a GGUF model. Returns 0 on failure or a non-zero opaque handle. */
-    @JvmStatic external fun loadModel(modelPath: String, contextSize: Int, threads: Int): Long
+    /**
+     * Loads a GGUF model.
+     * @param kvType    0 = FP16 (baseline), 1 = q4_0 (4× compressed, TurboQuant cousin), 2 = q8_0 (2×).
+     * @param gpuLayers 99 = offload all to Adreno via ggml-opencl, 0 = CPU only.
+     */
+    @JvmStatic external fun loadModel(
+        modelPath: String,
+        contextSize: Int,
+        threads: Int,
+        kvType: Int,
+        gpuLayers: Int,
+    ): Long
 
     /** Frees a model previously returned by [loadModel]. */
     @JvmStatic external fun unloadModel(handle: Long)

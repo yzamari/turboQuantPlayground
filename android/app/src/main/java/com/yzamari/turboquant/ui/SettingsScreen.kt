@@ -265,9 +265,46 @@ fun SettingsScreen(vm: AssistantViewModel) {
                         modifier = Modifier.padding(start = 8.dp))
                 }
 
-                // (The "TurboQuant: ENABLED" card above is the real
-                // status — this used to be a placeholder toggle and was
-                // removed because it was confusing.)
+                // KV-cache compression — applies during decode, not just measurement.
+                Text("KV-cache compression (active in decode)",
+                     style = MaterialTheme.typography.titleSmall,
+                     modifier = Modifier.padding(top = 8.dp))
+                Text(
+                    "Selects how the K/V tensors are stored during inference. " +
+                        "q4_0 is the closest cousin of TurboQuant in llama.cpp " +
+                        "(same 4× compression, slightly lower quality).",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                for ((label, value) in listOf(
+                    "FP16 (no compression)" to 0,
+                    "q4_0 — 4× compressed (TurboQuant cousin) ⭐" to 1,
+                    "q8_0 — 2× compressed" to 2,
+                )) {
+                    OutlinedButton(
+                        onClick = { vm.kvType = value },
+                        enabled = !vm.isModelReady(),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text((if (value == vm.kvType) "● " else "○ ") + label)
+                    }
+                }
+
+                // GPU offload toggle (Adreno OpenCL).
+                Row(verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(top = 8.dp)) {
+                    Switch(
+                        checked = vm.gpuLayers > 0,
+                        onCheckedChange = { vm.gpuLayers = if (it) 99 else 0 },
+                        enabled = !vm.isModelReady(),
+                    )
+                    Text("Run on Adreno GPU (5.6× prompt-eval)",
+                         modifier = Modifier.padding(start = 8.dp))
+                }
+                Text(
+                    "Both options take effect at the next \"Load model\" — " +
+                        "Unload first if a model is already loaded.",
+                    style = MaterialTheme.typography.labelSmall,
+                )
             }
         }
 

@@ -107,12 +107,16 @@ std::string token_to_piece(const llama_vocab * vocab, llama_token tok) {
 extern "C" {
 
 // -------------------------------------------------------------------------
-// loadModel(String path, int ctxSize, int threads) -> long
+// loadModel(String path, int ctxSize, int threads, int kvType, int gpuLayers) -> long
+//   kvType    : 0 = FP16  (baseline)
+//               1 = q4_0  (TurboQuant cousin — 4× compression, ~0.85 cosine, +flash attn)
+//               2 = q8_0  (8-bit, 2× compression, ~0.99 cosine)
+//   gpuLayers : 99 = offload all to Adreno; 0 = CPU only
 // -------------------------------------------------------------------------
 JNIEXPORT jlong JNICALL
 Java_com_yzamari_turboquant_assistant_LlamaNative_loadModel(
     JNIEnv * env, jclass /*clazz*/,
-    jstring jPath, jint ctxSize, jint threads)
+    jstring jPath, jint ctxSize, jint threads, jint kvType, jint gpuLayers)
 {
     init_backends_once();
 
@@ -122,11 +126,11 @@ Java_com_yzamari_turboquant_assistant_LlamaNative_loadModel(
         return 0;
     }
 
-    LOGI("loadModel: %s ctx=%d threads=%d", path.c_str(), (int) ctxSize, (int) threads);
+    LOGI("loadModel: %s ctx=%d threads=%d kvType=%d gpuLayers=%d",
+         path.c_str(), (int) ctxSize, (int) threads, (int) kvType, (int) gpuLayers);
 
     llama_model_params mparams = llama_model_default_params();
-    // 1B model: try GPU offload if a GPU backend is loaded; otherwise CPU.
-    mparams.n_gpu_layers = 0;   // Adreno via ggml-opencl is not in our prebuilt set.
+    mparams.n_gpu_layers = (int) gpuLayers;  // 99 = all on Adreno via ggml-opencl
 
     llama_model * model = llama_model_load_from_file(path.c_str(), mparams);
     if (!model) {
@@ -139,6 +143,26 @@ Java_com_yzamari_turboquant_assistant_LlamaNative_loadModel(
     cparams.n_batch     = cparams.n_ctx;
     cparams.n_threads   = std::max(1, (int) threads);
     cparams.n_threads_batch = cparams.n_threads;
+
+    // KV-cache compression — the in-the-hot-path TurboQuant equivalent.
+    // q4_0 KV requires flash attention.
+    switch ((int) kvType) {
+        case 1:
+            cparams.type_k    = GGML_TYPE_Q4_0;
+            cparams.type_v    = GGML_TYPE_Q4_0;
+            cparams.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_ENABLED;
+            LOGI("loadModel: KV cache = q4_0 (4× compressed, +flash attn)");
+            break;
+        case 2:
+            cparams.type_k    = GGML_TYPE_Q8_0;
+            cparams.type_v    = GGML_TYPE_Q8_0;
+            cparams.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_ENABLED;
+            LOGI("loadModel: KV cache = q8_0 (2× compressed, +flash attn)");
+            break;
+        default:
+            LOGI("loadModel: KV cache = f16 (baseline)");
+            break;
+    }
 
     llama_context * ctx = llama_init_from_model(model, cparams);
     if (!ctx) {
