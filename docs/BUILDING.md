@@ -12,7 +12,7 @@ differ.
 | **Clang or GCC with C++17** | macOS: Xcode CLT; Linux: `apt install clang` | every build |
 | **Android NDK r26+** | Android Studio → SDK Manager → NDK | Android build |
 | **glslc** | `brew install glslang` (macOS), included with NDK at `ndk/.../shader-tools/.../glslc` | Vulkan backend |
-| **Python 3.11+ venv** | repo root: `python -m venv venv && source venv/bin/activate && pip install -e ".[torch,dev]"` | gen_golden.py |
+| **Python 3.13** (NOT 3.14) | repo root: `python3.13 -m venv venv && source venv/bin/activate && pip install -e ".[torch,dev]"`. Pinned via `.python-version`. **Why not 3.14:** macOS's system `libexpat.1.dylib` is incompatible with CPython 3.14's `_pyexpat.cpython-314-darwin.so`, so `pip install` silently fails on any package that imports `xml.parsers.expat` (most of them). 3.11 / 3.12 also work; 3.13 is the recommended floor. | gen_golden.py, siglip_block_ref.py |
 | **adb** (Platform Tools) | Android Studio → SDK Manager → Platform Tools | on-device test |
 | **Qualcomm AI Engine Direct (QAIRT) 2.27.x** | Qualcomm Developer Network (license-walled) | QNN/HTP backend |
 | **Gradle 8.7+ or Android Studio** | `brew install gradle` or AS | Android demo APK |
