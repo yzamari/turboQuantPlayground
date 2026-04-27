@@ -64,6 +64,10 @@ extern "C" void tq_attn_thunk(
     turboquant::attention_turboquant(q, k, v, BH, n_q, n_kv, D, scale, mask, out);
 }
 
+// Forward decl — definition lives further down (helper used by both the
+// init_backends_once timing and per-request stats below).
+double now_ms();
+
 // Single global flag — the first loadModel call performs ggml backend init.
 std::atomic<bool> g_backend_inited{false};
 std::mutex        g_backend_init_mu;
@@ -79,7 +83,16 @@ void init_backends_once() {
     }, nullptr);
     ggml_backend_load_all();
     llama_set_turboquant_attn_fn(tq_attn_thunk);
-    LOGI("ggml backends loaded; turboquant attention provider registered");
+
+    // Eagerly build the libturboquant singleton backend (best available;
+    // OpenCL on Adreno when present). Pays the OpenCL program-compilation
+    // cost (~500 ms) here at app init instead of on the first decode token.
+    // P2.1c Phase A1 — see /Users/yahavzamari/.claude/plans/...
+    const double t_be0 = now_ms();
+    turboquant::ensure_backends_initialized();
+    const double t_be_ms = now_ms() - t_be0;
+    LOGI("ggml backends loaded; turboquant attention provider registered "
+         "(turboquant backend init %.1f ms)", t_be_ms);
     g_backend_inited.store(true, std::memory_order_release);
 }
 

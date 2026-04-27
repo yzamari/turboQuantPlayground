@@ -55,13 +55,16 @@ void attention_turboquant(
     cfg.buffer_size       = 0;
     cfg.layer_idx         = 0;
 
-    // Backend choice: best available at runtime. Falls back to cpu_scalar.
-    auto backend = create_best_backend();
+    // Backend choice: best available at runtime, cached across calls.
+    // The singleton keeps OpenCL kernel programs compiled and reused
+    // (~500 ms compilation cost would otherwise hit every attention call).
+    // Falls back to cpu_scalar.
+    IBackend * backend = get_best_backend();
     if (!backend) {
         throw std::runtime_error("attention_turboquant: no backend available");
     }
 
-    TurboQuantKVCache cache(cfg, backend.get(), std::move(Pi), std::move(S));
+    TurboQuantKVCache cache(cfg, backend, std::move(Pi), std::move(S));
     cache.prefill(k, v, BH, n_kv);
 
     // Scores: [BH, n_q, n_kv].

@@ -2,6 +2,7 @@
 
 #include <cstring>
 #include <memory>
+#include <mutex>
 
 namespace turboquant {
 
@@ -88,6 +89,29 @@ std::unique_ptr<IBackend> create_best_backend() {
         if (b) return b;
     }
     return nullptr;
+}
+
+// ---- Singleton variant ----
+//
+// We keep the unique_ptr inside this TU rather than as a static-locals-in-
+// function so we can guard initialization with a mutex (function-local
+// statics handle the race themselves but we also want ensure_*() to act
+// as an explicit "do init now" trigger).
+namespace {
+std::mutex                 g_singleton_mu;
+std::unique_ptr<IBackend>  g_singleton_backend;  // nullptr until first init
+}  // namespace
+
+void ensure_backends_initialized() {
+    std::lock_guard<std::mutex> lk(g_singleton_mu);
+    if (g_singleton_backend) return;
+    g_singleton_backend = create_best_backend();
+}
+
+IBackend * get_best_backend() {
+    ensure_backends_initialized();
+    std::lock_guard<std::mutex> lk(g_singleton_mu);
+    return g_singleton_backend.get();
 }
 
 }  // namespace turboquant
