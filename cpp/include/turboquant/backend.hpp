@@ -82,6 +82,28 @@ public:
                                const float* zeros,
                                int N, int D, int bits, int group_size,
                                float* out) = 0;
+
+    // ---- Optional: stateful GPU buffer pool for session-cached decode ----
+    //
+    // Backends with a per-call upload bottleneck (chiefly OpenCL: ~17–23 ms
+    // per attention call to re-upload Pi / quantized K / centroids via
+    // CL_MEM_COPY_HOST_PTR) can override these to allocate a long-lived GPU
+    // buffer keyed by (BH, D, key_bits) and return an opaque handle. The
+    // handle is stored in attention_turboquant.cpp's SessionEntry and is
+    // released via release_keys() when the session is invalidated (model
+    // unload).
+    //
+    // CPU backends (scalar, NEON) leave these at their no-op defaults — no
+    // GPU memory to manage, no per-call upload to amortize.
+    //
+    // Phase A2 (F3) of the HW-accel plan. Default returns nullptr so this
+    // commit is plumbing-only; the OpenCL implementation that actually
+    // uses the handle in mse_score() lands separately. See
+    // ~/.claude/plans/async-baking-hopper.md P2 Stage B.
+    virtual void* prepare_keys(int /*BH*/, int /*D*/, int /*key_bits*/) {
+        return nullptr;
+    }
+    virtual void release_keys(void* /*handle*/) {}
 };
 
 // Factory. Returns nullptr if the requested backend wasn't compiled in or
