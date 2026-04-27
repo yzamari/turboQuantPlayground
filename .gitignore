@@ -36,3 +36,6 @@ android/gradlew.bat
 .vscode/
 *.swp
 *~
+
+# Worktrees
+.worktrees/
