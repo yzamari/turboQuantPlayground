@@ -1,9 +1,15 @@
 # Adreno OpenCL backend. We don't link against libOpenCL.so at build time;
 # instead we dlopen it at runtime so the library still builds for hosts that
 # have no OpenCL ICD.
+#
+# Paths use CMAKE_CURRENT_LIST_DIR rather than CMAKE_SOURCE_DIR so this
+# CMakeLists works both standalone (when cpp/ is the project root) and
+# when added via add_subdirectory from the Android JNI build (where
+# CMAKE_SOURCE_DIR points at android/app/src/main/cpp/, not cpp/).
+set(_tq_cpp_root ${CMAKE_CURRENT_LIST_DIR}/../..)
 
 # Embed each .cl source as a const byte array.
-include(${CMAKE_SOURCE_DIR}/cmake/embed_resource.cmake)
+include(${_tq_cpp_root}/cmake/embed_resource.cmake)
 
 set(_kernels_dir ${CMAKE_CURRENT_SOURCE_DIR}/kernels)
 set(_gen_dir     ${CMAKE_CURRENT_BINARY_DIR}/generated)
@@ -24,10 +30,10 @@ add_library(tq_backend_opencl STATIC
     ${_opencl_gen_srcs}
 )
 target_include_directories(tq_backend_opencl
-    PUBLIC  ${CMAKE_SOURCE_DIR}/include
+    PUBLIC  ${_tq_cpp_root}/include
     PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include
             ${_gen_dir}
-            ${CMAKE_SOURCE_DIR}/src         # for packing.hpp if needed
+            ${_tq_cpp_root}/src             # for packing.hpp if needed
 )
 target_compile_features(tq_backend_opencl PUBLIC cxx_std_17)
 
