@@ -126,6 +126,7 @@ class AssistantViewModel(app: Application) : AndroidViewModel(app) {
                 val kvLabel = when (kvType) {
                     1    -> "q4_0 KV (4× compressed, TurboQuant cousin)"
                     2    -> "q8_0 KV (2× compressed)"
+                    3    -> "TurboQuant (PolarQuant + 1-bit QJL)"
                     else -> "FP16 KV (baseline, no compression)"
                 }
                 val gpuLabel = if (gpuLayers > 0) "GPU=Adreno (ngl=$gpuLayers)"

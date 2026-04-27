@@ -32,10 +32,20 @@ set(TQ_BUILD_BENCH OFF CACHE BOOL "" FORCE)
 set(TQ_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(TQ_WITH_CPU_SCALAR ON  CACHE BOOL "" FORCE)
 set(TQ_WITH_NEON       ON  CACHE BOOL "" FORCE)
-# OpenCL/Vulkan/QNN backends in cpp/backends/ reference CMAKE_SOURCE_DIR
-# (which points at this JNI tree under add_subdirectory) — disabled in the
-# assistant build. The standalone bench keeps cpu_scalar + cpu_neon.
-set(TQ_WITH_OPENCL     OFF CACHE BOOL "" FORCE)
+# OpenCL: enabled. Pulls in cpp/backends/opencl/ — five TurboQuant
+# kernels (rotate, mse_encode, mse_score, qjl_score, value_dequant)
+# bit-exact with CPU scalar at 727/727 host parity. Adds ~2 MB to
+# libturboquant_jni.so and lets the ggml custom op delegate the heavy
+# work to Adreno via attention_turboquant() -> IBackend (Phase A0 of
+# /Users/yahavzamari/.claude/plans/crystalline-tickling-firefly.md).
+# Both ggml-opencl and our backend share the vendor libOpenCL.so via
+# AndroidManifest's <uses-native-library>; separate cl_context per
+# Khronos spec so no conflict.
+#
+# Vulkan / QNN remain disabled in the Android build for now — Vulkan
+# isn't part of the Path A bridge plan, and QNN needs the QAIRT-built
+# graph artifacts which require a Linux host (Path B0).
+set(TQ_WITH_OPENCL     ON  CACHE BOOL "" FORCE)
 set(TQ_WITH_VULKAN     OFF CACHE BOOL "" FORCE)
 set(TQ_WITH_QNN        OFF CACHE BOOL "" FORCE)
 

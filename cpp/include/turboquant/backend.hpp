@@ -90,6 +90,31 @@ std::unique_ptr<IBackend> create_backend(BackendKind kind);
 
 // Returns the best available backend in priority order:
 //   QnnHtp > OpenCL > Vulkan > CpuNeon > CpuScalar
+// Each call constructs a fresh backend — including kernel-program compilation
+// for OpenCL (~500 ms first call). Use get_best_backend() instead when the
+// backend should persist across many calls (e.g. one per attention layer
+// per token).
 std::unique_ptr<IBackend> create_best_backend();
+
+// Process-wide singleton variant of create_best_backend(). Lazily creates
+// the best available backend on first call, caches it, returns the same
+// pointer on every subsequent call. The pointer is owned by the singleton —
+// do NOT delete it. NOT thread-safe to call concurrently with backend
+// teardown (we never tear down a singleton in practice).
+//
+// The backend's compilation cost (program build for OpenCL, graph finalize
+// for QNN) happens inside the first call, so callers that care about
+// startup latency should call ensure_backends_initialized() during
+// program init.
+//
+// Returns nullptr only if no backend at all is available (extremely
+// unlikely — CpuScalar is always present when TQ_WITH_CPU_SCALAR is on).
+IBackend * get_best_backend();
+
+// Idempotent. If the singleton hasn't been built yet, build it now.
+// Useful during program init (e.g. JNI_OnLoad / first JNI call) so
+// the OpenCL program-compilation cost doesn't fall on the first
+// inference token.
+void ensure_backends_initialized();
 
 }  // namespace turboquant

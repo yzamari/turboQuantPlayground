@@ -172,16 +172,32 @@ ValueQuantized quantize_values(const float* v, int n_vec, int d,
 
 void dequantize_values(const ValueQuantized& vq, float* out);
 
-// ---- Stateless single-call attention via TurboQuant (Path 2.1c Step 1) ----
+// ---- Single-call attention via TurboQuant (Path 2.1c Step 1, A2) ----
 //
 // One-shot attention: feed Q, K, V, get masked + softmaxed attention output
-// back. Internally builds a TurboQuantKVCache, prefills K/V (compressed),
+// back. Internally builds a TurboQuantKVCache, fills K/V (compressed),
 // computes attention_scores against Q, applies the optional additive mask,
-// softmaxes, and finally calls attend(). No persistent state — each call
-// constructs a throwaway cache.
+// softmaxes, and finally calls attend().
+//
+// Two modes:
+//
+//   Stateless (default):  session_id == 0 OR layer_il < 0
+//     Constructs a throwaway TurboQuantKVCache per call. Used by the host
+//     bench / parity tests where each call is independent.
+//
+//   Session-cached (Phase A2):  session_id != 0 AND layer_il >= 0
+//     Looks up an existing TurboQuantKVCache by (session_id, layer_il)
+//     and re-uses it. On first call: prefill with all n_kv tokens. On
+//     later calls with a larger n_kv: append only the *new* tokens
+//     (positions [old_n_kv, n_kv)). Saves the rotate + quantize cost
+//     for the K/V slice that's already in the cache, and on the OpenCL
+//     backend keeps the K-side cl_mem allocations alive across calls.
+//     session_id is intended to be the kv_cache_turboquant instance
+//     pointer (cast to uintptr_t) — stable across decode steps and
+//     unique per (model, kv-cache).
 //
 // This is the bridge function our llama.cpp fork calls from the substituted
-// attention path (`ggml_map_custom3` op forward in the fork's
+// attention path (`ggml_custom_4d` op forward in the fork's
 // llama-graph.cpp) so the on-device chat decoder can route through TurboQuant
 // without taking a libturboquant link dependency on llama.cpp itself.
 //
@@ -202,7 +218,14 @@ void attention_turboquant(
     float scale, const float* mask, float* out,
     int key_bits   = 3,
     int value_bits = 2,
-    uint64_t seed  = 42);
+    uint64_t seed  = 42,
+    uint64_t session_id = 0,
+    int      layer_il   = -1);
+
+// Drop the cached TurboQuantKVCache for one (session_id, layer_il) pair.
+// Called when a model unloads. layer_il < 0 means "drop all layers for
+// this session". If neither matches anything, this is a no-op.
+void attention_turboquant_invalidate(uint64_t session_id, int layer_il = -1);
 
 // ---- Build info ----
 const char* version_string();

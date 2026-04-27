@@ -4,6 +4,13 @@
 > substitution in llama.cpp's hot decode path. Designed to be picked up cold:
 > open this file, follow it top-to-bottom, end up with chat tokens running
 > through `TurboQuantKVCache` instead of stock FP16.
+>
+> **Status (2026-04-26 night session).** Steps 1-6 are implemented and the
+> host parity sweep is green (72/72 configs at cosine ≥ 0.85, libllama links
+> clean with all three TurboQuant symbols exported). Branch `p2.1c/integrated`
+> contains the full stack. **What's pending:** on-device verification on
+> S24 Ultra (Llama-3.2-1B with kvType=3) and Step β (the memory win — KV
+> backing-store override, 5-7 days). See `docs/handoff-2026-04-26-night.md`.
 
 ## Context
 

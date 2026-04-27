@@ -73,6 +73,16 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.TurboQuant">
 
+        <!-- Vendor-public libs we want to dlopen from the system namespace.
+             Required since Android 11 (target/min sdk 30+) — the app's linker
+             namespace only exposes NDK public libs by default. libOpenCL.so is
+             listed in /vendor/etc/public.libraries.txt on Snapdragon devices
+             (e.g. S24 Ultra), so opting in here lets ggml-opencl reach the
+             real Adreno ICD loader at runtime instead of our APK-bundled stub.
+             android:required="false" so devices without the vendor lib still
+             install — we just fall back to CPU there. -->
+        <uses-native-library android:name="libOpenCL.so" android:required="false" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true"
