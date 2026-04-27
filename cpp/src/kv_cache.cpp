@@ -163,13 +163,77 @@ void TurboQuantKVCache::prefill(const float* keys, const float* values,
     }
 }
 
-void TurboQuantKVCache::append(const float* /*key*/, const float* /*value*/, int /*BH*/) {
-    // Decode-loop append + flush is implemented in P0.4 follow-up; the bench
-    // exercises prefill-only timing for now.
-    throw std::logic_error("TurboQuantKVCache::append not yet implemented (post-P0)");
+// Append one decode-step (key, value) of shape [BH, D] to the cache.
+//
+// Implementation note: this v1 grows the unquantized recent buffer
+// indefinitely instead of flushing the oldest slot into the quantized
+// portion. Reasons:
+//
+//  - Flushing would require quantizing one new token and grafting its
+//    slot into key_q_ / value_q_'s [BH, n_quant, D] layout — inserting
+//    at BH-strided offsets across mse_indices, qjl_signs, norms,
+//    residual_norms, value scales/zeros, and packed bytes. That's
+//    surgical and easy to get wrong.
+//
+//  - For chat-length responses (≤ ~1024 decode tokens) the buffer
+//    growing by 1 per token is bounded: 1024 * BH=32 * D=64 * 16
+//    layers * 4 bytes ≈ 134 MB — still less than the FP16 baseline's
+//    KV cache.
+//
+//  - The quantized portion built by prefill stays compressed; we only
+//    lose compression on the *decoded* tokens, which is exactly what
+//    the recent-buffer strategy was designed for anyway.
+//
+// True flush (move oldest buffer slot into key_q_/value_q_) is a P0.4
+// follow-up. When it lands, this function should switch to a
+// fixed-buffer + flush-on-overflow strategy.
+void TurboQuantKVCache::append(const float* key, const float* value, int BH) {
+    if (BH != BH_) {
+        throw std::invalid_argument("append: BH mismatch");
+    }
+    const int D = cfg_.head_dim;
+    const int new_n_buf = n_buf_ + 1;
+
+    // Grow buffers from [BH, n_buf, D] to [BH, n_buf+1, D]. Rebuild
+    // because the bh-major layout puts each BH's tokens contiguously,
+    // so inserting one slot per BH means rewriting every BH segment.
+    // O(BH * n_buf * D) per call — amortized OK for chat-length decodes.
+    std::vector<float> new_key_buf  (static_cast<size_t>(BH) * new_n_buf * D);
+    std::vector<float> new_value_buf(static_cast<size_t>(BH) * new_n_buf * D);
+
+    for (int b = 0; b < BH; ++b) {
+        const size_t old_off = static_cast<size_t>(b) * n_buf_   * D;
+        const size_t new_off = static_cast<size_t>(b) * new_n_buf * D;
+
+        if (n_buf_ > 0) {
+            std::memcpy(new_key_buf  .data() + new_off,
+                        key_buf_     .data() + old_off,
+                        static_cast<size_t>(n_buf_) * D * sizeof(float));
+            std::memcpy(new_value_buf.data() + new_off,
+                        value_buf_   .data() + old_off,
+                        static_cast<size_t>(n_buf_) * D * sizeof(float));
+        }
+
+        const size_t tail_off = new_off + static_cast<size_t>(n_buf_) * D;
+        std::memcpy(new_key_buf  .data() + tail_off,
+                    key   + static_cast<size_t>(b) * D,
+                    static_cast<size_t>(D) * sizeof(float));
+        std::memcpy(new_value_buf.data() + tail_off,
+                    value + static_cast<size_t>(b) * D,
+                    static_cast<size_t>(D) * sizeof(float));
+    }
+
+    key_buf_   = std::move(new_key_buf);
+    value_buf_ = std::move(new_value_buf);
+    n_buf_     = new_n_buf;
+    ++seq_len_;
 }
 
 void TurboQuantKVCache::flush_buffer_() {
+    // Not used by the v1 append above (which grows the buffer instead of
+    // flushing). When the proper fixed-buffer + flush strategy lands,
+    // this should quantize key_buf_[*, 0, *] / value_buf_[*, 0, *] and
+    // append-with-BH-stride to key_q_ / value_q_, then shift the buffer.
     throw std::logic_error("TurboQuantKVCache::flush_buffer_ not yet implemented (post-P0)");
 }
 
