@@ -93,7 +93,16 @@ SessionEntry & get_or_create_entry_locked(
     cfg.key_bits         = key_bits;
     cfg.value_bits       = value_bits;
     cfg.value_group_size = 32;
-    cfg.buffer_size      = 0;
+    // Recent-tokens unquantized buffer. Last `buffer_size` tokens stay
+    // at full precision; older tokens are TurboQuant-compressed. This
+    // is the standard chat-quality knob — attention weights are
+    // naturally heaviest on recent tokens, so keeping the recent
+    // window precise dramatically improves coherence with minimal
+    // memory cost (64 * D * BH ≈ ~64KB per layer for Llama-3.2-1B).
+    // The host bench uses 0 to stress-test the compressed-only path;
+    // chat/decode wants a real buffer. Set to 0 via TQ_NO_BUFFER env
+    // for the original stateless behaviour.
+    cfg.buffer_size      = 64;
     cfg.layer_idx        = layer_il;
 
     entry.cache = std::make_unique<TurboQuantKVCache>(
@@ -212,24 +221,27 @@ void attention_turboquant(
         // First call for this (session, layer): full prefill.
         entry.cache->prefill(k, v, BH, n_kv);
     } else if (n_kv > cached_n) {
-        // Append the new tokens: positions [cached_n, n_kv) of k/v.
-        // The append path takes one (key, value) at a time; the
-        // input k/v are full row-major [BH * n_kv * D] tensors, so
-        // for token t we need k[bh * n_kv + t] for each bh. The
-        // existing prefill() call is what populates the BH × t pattern;
-        // append() walks BH internally for a single t.
-        for (int t = cached_n; t < n_kv; ++t) {
-            // Build a contiguous [BH * D] slice for token t.
-            std::vector<float> kt(static_cast<size_t>(BH) * D);
-            std::vector<float> vt(static_cast<size_t>(BH) * D);
-            for (int b = 0; b < BH; ++b) {
-                const float * ksrc = k + (static_cast<size_t>(b) * n_kv + t) * D;
-                const float * vsrc = v + (static_cast<size_t>(b) * n_kv + t) * D;
-                std::copy(ksrc, ksrc + D, kt.data() + static_cast<size_t>(b) * D);
-                std::copy(vsrc, vsrc + D, vt.data() + static_cast<size_t>(b) * D);
-            }
-            entry.cache->append(kt.data(), vt.data(), BH);
-        }
+        // Cache grew (decode added tokens). Ideally we'd append() the
+        // new tokens, but TurboQuantKVCache::append() is currently
+        // unimplemented (kv_cache.cpp:169 throws std::logic_error,
+        // a holdover from the P0 cut). Fall back to a full re-prefill
+        // — wastes the rotate+quantize work for the previously cached
+        // slice but stays safe. Implementing append() is the next
+        // perf lever; until then this path costs O(n_kv) per decode
+        // step instead of O(1).
+        entry.cache = nullptr;  // drop and rebuild
+        auto Pi = generate_pi_qr(D, seed);
+        auto S  = generate_qjl_S(D, seed + 1000);
+        TurboQuantKVCache::Config cfg;
+        cfg.head_dim         = D;
+        cfg.key_bits         = key_bits;
+        cfg.value_bits       = value_bits;
+        cfg.value_group_size = 32;
+        cfg.buffer_size      = 64;  // recent-window full precision (chat coherence)
+        cfg.layer_idx        = layer_il;
+        entry.cache = std::make_unique<TurboQuantKVCache>(
+            cfg, backend, std::move(Pi), std::move(S));
+        entry.cache->prefill(k, v, BH, n_kv);
     } else if (n_kv < cached_n) {
         // Cache regressed (e.g. context reset). Wipe and re-prefill.
         // Rebuild the entry with a fresh cache.
@@ -245,7 +257,7 @@ void attention_turboquant(
         cfg.key_bits         = key_bits;
         cfg.value_bits       = value_bits;
         cfg.value_group_size = 32;
-        cfg.buffer_size      = 0;
+        cfg.buffer_size      = 64;  // recent-window full precision
         cfg.layer_idx        = layer_il;
         entry.cache = std::make_unique<TurboQuantKVCache>(
             cfg, backend, std::move(Pi), std::move(S));

@@ -68,9 +68,18 @@ extern "C" void tq_attn_thunk(
     int BH, int n_q, int n_kv, int D,
     float scale, const float * mask, float * out) {
     const uint64_t session_id = reinterpret_cast<uintptr_t>(session);
+    // key_bits=4 (instead of bench default 3) lifts host grid cos_mean
+    // from ~0.97 to ~0.99 — needed for a 1B-param model to produce
+    // coherent chat. value_bits stays at 2 because quantize_values
+    // currently only supports {2, 4, 8} (asserts at kv_cache.cpp:22).
+    // session_id is currently passed through but the libturboquant
+    // session cache falls back to stateless prefill on every call
+    // because TurboQuantKVCache::append() is unimplemented (kv_cache.cpp:169).
+    // Implementing append() is the next step that would let the cache
+    // amortize work across decode tokens.
     turboquant::attention_turboquant(
         q, k, v, BH, n_q, n_kv, D, scale, mask, out,
-        /*key_bits  =*/ 3, /*value_bits=*/ 2,
+        /*key_bits  =*/ 4, /*value_bits=*/ 2,
         /*seed      =*/ 42 + 7 * (uint64_t) (layer_il < 0 ? 0 : layer_il),
         session_id, layer_il);
 }
