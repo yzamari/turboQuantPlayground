@@ -17,6 +17,31 @@ import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.io.File
 
+/** Selectable chat (text-only) LLMs. Each entry maps to a single GGUF
+ *  sitting in the app's external files dir (or one of the legacy adb
+ *  push locations). Mirrors the VlmRunner.Model enum pattern. */
+enum class LlmModel(
+    val displayName: String,
+    val file: String,
+    val sizeLabel: String,
+    val downloadUrl: String,
+) {
+    LLAMA_32_1B(
+        "Llama-3.2-1B-Instruct (Q4_K_M)",
+        "Llama-3.2-1B-Instruct-Q4_K_M.gguf",
+        "≈807 MB",
+        "https://huggingface.co/bartowski/Llama-3.2-1B-Instruct-GGUF/resolve/main/" +
+            "Llama-3.2-1B-Instruct-Q4_K_M.gguf?download=true",
+    ),
+    QWEN_25_3B(
+        "Qwen2.5-3B-Instruct (Q4_K_M) — better reasoning",
+        "Qwen2.5-3B-Instruct-Q4_K_M.gguf",
+        "≈1.9 GB",
+        "https://huggingface.co/bartowski/Qwen2.5-3B-Instruct-GGUF/resolve/main/" +
+            "Qwen2.5-3B-Instruct-Q4_K_M.gguf?download=true",
+    );
+}
+
 class AssistantViewModel(app: Application) : AndroidViewModel(app) {
 
     sealed class ChatEntry {
@@ -35,6 +60,9 @@ class AssistantViewModel(app: Application) : AndroidViewModel(app) {
 
     var modelStatus by mutableStateOf("No model loaded")
         private set
+    /** Currently-selected chat LLM. Switching this while a model is
+     *  loaded requires Unload → Load to pick up the new GGUF. */
+    var activeLlm  by mutableStateOf(LlmModel.LLAMA_32_1B)
     var loading    by mutableStateOf(false)
         private set
     var generating by mutableStateOf(false)
@@ -85,25 +113,31 @@ class AssistantViewModel(app: Application) : AndroidViewModel(app) {
     init {
         voice.initTts()
         messages.add(ChatEntry.System(
-            "Welcome to TurboQuant Assistant — a fully on-device personal assistant " +
-            "powered by Llama-3.2-1B. Load the model from the Settings tab to begin."
+            "Welcome to TurboQuant Assistant — a fully on-device personal assistant. " +
+            "Pick a chat model in Settings (Llama-3.2-1B for speed, Qwen2.5-3B for " +
+            "reasoning) and tap Load to begin."
         ))
     }
 
     /**
-     * Search the usual locations for the GGUF model and return the first hit.
+     * Search the usual locations for [model]'s GGUF and return the first
+     * hit. Defaults to [activeLlm] so existing callers (e.g. Auto-detect)
+     * resolve the active selection without changing.
      */
-    fun findModelPath(): String? {
+    fun findModelPath(model: LlmModel = activeLlm): String? {
         val candidates = listOf(
-            File(getApplication<Application>().getExternalFilesDir(null),
-                "Llama-3.2-1B-Instruct-Q4_K_M.gguf"),
+            File(getApplication<Application>().getExternalFilesDir(null), model.file),
             File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
-                "Llama-3.2-1B-Instruct-Q4_K_M.gguf"),
-            File("/sdcard/Download/Llama-3.2-1B-Instruct-Q4_K_M.gguf"),
-            File("/data/local/tmp/llama/Llama-3.2-1B-Instruct-Q4_K_M.gguf"),
+                model.file),
+            File("/sdcard/Download/${model.file}"),
+            File("/data/local/tmp/llama/${model.file}"),
         )
         return candidates.firstOrNull { it.exists() && it.canRead() }?.absolutePath
     }
+
+    /** All LLMs whose GGUF is currently on disk somewhere we look. */
+    fun availableLlmModels(): List<LlmModel> =
+        LlmModel.values().filter { findModelPath(it) != null }
 
     fun loadModel(path: String) {
         if (loading || handle != 0L) return

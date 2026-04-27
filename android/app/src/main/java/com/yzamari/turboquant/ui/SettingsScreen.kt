@@ -18,7 +18,6 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -33,25 +32,17 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import com.yzamari.turboquant.assistant.AssistantViewModel
+import com.yzamari.turboquant.assistant.LlmModel
 import com.yzamari.turboquant.assistant.VlmRunner
-import java.io.File
 
 @Composable
 fun SettingsScreen(vm: AssistantViewModel) {
     val context = LocalContext.current
     val scroll  = rememberScrollState()
 
-    var modelPath by remember {
-        mutableStateOf(
-            vm.findModelPath()
-                ?: File(context.getExternalFilesDir(null),
-                        "Llama-3.2-1B-Instruct-Q4_K_M.gguf").absolutePath
-        )
-    }
-
-    val modelExists = remember(modelPath, vm.modelStatus) {
-        try { File(modelPath).exists() } catch (_: Throwable) { false }
-    }
+    val resolvedPath = remember(vm.activeLlm, vm.modelStatus) { vm.findModelPath() }
+    val modelExists  = resolvedPath != null
+    val expectedDir  = context.getExternalFilesDir(null)?.absolutePath ?: "?"
 
     Column(
         modifier = Modifier
@@ -72,32 +63,54 @@ fun SettingsScreen(vm: AssistantViewModel) {
                 modifier = Modifier.fillMaxWidth().padding(12.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Text("Model status",
+                Text("Chat (LLM) model",
                     style = MaterialTheme.typography.titleSmall)
+                Text(
+                    "1B is fast but trivial; 3B is slower but actually reasons. " +
+                        "Switching requires Unload → Load.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+
+                for (m in LlmModel.values()) {
+                    val installed = vm.findModelPath(m) != null
+                    OutlinedButton(
+                        onClick = {
+                            if (installed && !vm.isModelReady() && !vm.loading) {
+                                vm.activeLlm = m
+                            }
+                        },
+                        enabled = installed && !vm.isModelReady() && !vm.loading,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(
+                            (if (m == vm.activeLlm) "● " else "○ ") +
+                                m.displayName +
+                                "  (${m.sizeLabel})" +
+                                (if (!installed) "  — not installed" else ""),
+                        )
+                    }
+                }
+
+                Text("Model status",
+                    style = MaterialTheme.typography.titleSmall,
+                    modifier = Modifier.padding(top = 4.dp))
                 Text(vm.modelStatus,
                     style = MaterialTheme.typography.bodySmall,
                     fontFamily = FontFamily.Monospace)
 
-                OutlinedTextField(
-                    value = modelPath,
-                    onValueChange = { modelPath = it },
-                    label = { Text("GGUF path") },
-                    singleLine = false,
-                    modifier = Modifier.fillMaxWidth()
-                )
                 Text(
                     if (modelExists)
-                        "✓ File exists at this path."
+                        "✓ ${vm.activeLlm.file} found at ${resolvedPath}"
                     else
-                        "✗ No file at this path. Push the GGUF with:\n" +
-                        "    adb push <gguf> ${context.getExternalFilesDir(null)?.absolutePath}/",
+                        "✗ ${vm.activeLlm.file} not found. Push with:\n" +
+                            "    adb push <gguf> $expectedDir/",
                     style = MaterialTheme.typography.labelSmall,
                     fontFamily = FontFamily.Monospace,
                 )
 
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(
-                        onClick = { vm.loadModel(modelPath) },
+                        onClick = { resolvedPath?.let { vm.loadModel(it) } },
                         enabled = !vm.loading && !vm.isModelReady() && modelExists
                     ) {
                         Text(if (vm.loading) "Loading…" else "Load model")
@@ -108,19 +121,13 @@ fun SettingsScreen(vm: AssistantViewModel) {
                     ) {
                         Text("Unload")
                     }
-                    OutlinedButton(
-                        onClick = {
-                            vm.findModelPath()?.let { modelPath = it }
-                        }
-                    ) {
-                        Text("Auto-detect")
-                    }
                 }
 
-                OutlinedButton(onClick = {
-                    downloadModel(context)
-                }) {
-                    Text("Download Llama-3.2-1B (≈807 MB)")
+                OutlinedButton(
+                    onClick = { downloadModel(context, vm.activeLlm) },
+                    enabled = !modelExists,
+                ) {
+                    Text("Download ${vm.activeLlm.displayName} (${vm.activeLlm.sizeLabel})")
                 }
                 Text(
                     "Tip: if the device has no internet, push the file via adb instead.",
@@ -316,15 +323,11 @@ fun SettingsScreen(vm: AssistantViewModel) {
     }
 }
 
-private fun downloadModel(context: Context) {
-    val url = "https://huggingface.co/bartowski/Llama-3.2-1B-Instruct-GGUF/resolve/main/" +
-              "Llama-3.2-1B-Instruct-Q4_K_M.gguf?download=true"
-    val req = DownloadManager.Request(Uri.parse(url))
-        .setTitle("Llama-3.2-1B-Instruct (Q4_K_M)")
+private fun downloadModel(context: Context, model: LlmModel) {
+    val req = DownloadManager.Request(Uri.parse(model.downloadUrl))
+        .setTitle("${model.displayName} (${model.sizeLabel})")
         .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-        .setDestinationInExternalFilesDir(
-            context, null, "Llama-3.2-1B-Instruct-Q4_K_M.gguf"
-        )
+        .setDestinationInExternalFilesDir(context, null, model.file)
         .setAllowedOverMetered(true)
     val dm = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
     runCatching { dm.enqueue(req) }
