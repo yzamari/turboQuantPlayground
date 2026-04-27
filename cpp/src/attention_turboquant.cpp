@@ -134,6 +134,12 @@ SessionEntry & get_or_create_entry_locked(
     // symmetric.
     entry.gpu_key_handle = backend->prepare_keys(BH, D, key_bits);
 
+    // P2 Stage B: hand the handle to the cache so its
+    // attention_scores() can forward it to backend->mse_score_pooled()
+    // on every decode step. nullptr is OK — the default mse_score_pooled
+    // impl falls back to mse_score().
+    entry.cache->set_gpu_key_handle(entry.gpu_key_handle);
+
     return entry;
 }
 
@@ -286,6 +292,9 @@ void attention_turboquant(
         entry.cache = std::make_unique<TurboQuantKVCache>(
             cfg, backend, std::move(Pi), std::move(S));
         entry.gpu_key_handle = backend->prepare_keys(BH, D, key_bits);
+        // P2 Stage B: same handle plumb-through as the fresh-entry path
+        // in get_or_create_entry_locked.
+        entry.cache->set_gpu_key_handle(entry.gpu_key_handle);
         entry.cache->prefill(k, v, BH, n_kv);
     }
     // n_kv == cached_n: cache already has the full window; just compute

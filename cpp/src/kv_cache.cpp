@@ -470,7 +470,11 @@ void TurboQuantKVCache::attention_scores(const float* query, int BH, int n_q,
     // Quantized portion: out[bh, t, j] for j in [0, n_quant)
     if (n_quant_ > 0) {
         std::vector<float> tmp(static_cast<size_t>(BH) * n_q * n_quant_);
-        key_quantizer_.attention_score(query, BH, n_q, key_q_, n_quant_, tmp.data());
+        // P2 Stage B: forward the cached opaque GPU-key handle to the
+        // quantizer so OpenCL can use the cl_mem pool. nullptr selects
+        // the unpooled fallback (default backend impl).
+        key_quantizer_.attention_score(query, BH, n_q, key_q_, n_quant_,
+                                       tmp.data(), gpu_key_handle_);
         for (int b = 0; b < BH; ++b) {
             for (int t = 0; t < n_q; ++t) {
                 float* dst = out_scores + ((static_cast<size_t>(b) * n_q + t) * S);

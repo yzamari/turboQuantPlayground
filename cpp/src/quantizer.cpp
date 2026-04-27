@@ -198,7 +198,8 @@ void TurboQuantProd::dequantize(const ProdQuantized& q, float* out) const {
 
 void TurboQuantProd::attention_score(const float* query, int BH, int n_q,
                                      const ProdQuantized& key, int N,
-                                     float* out) const {
+                                     float* out,
+                                     void* gpu_key_handle) const {
     // Pre-rotate the query once: q_rot[bh*n_q, j] = sum_k query[bh*n_q, k] * Pi[j, k]
     // (since q_rot = query @ Pi^T)
     const int BHQ = BH * n_q;
@@ -242,10 +243,14 @@ void TurboQuantProd::attention_score(const float* query, int BH, int n_q,
             float*       ot   = out             + (static_cast<size_t>(bh) * n_q + t) * N;
 
             // Treat BH=1 for the kernel (single bh, single query) so packed
-            // strides match.
-            backend_->mse_score(qr_t, mse_packed_bh, norms_bh,
-                                mse_.centroids().data(),
-                                /*BH=*/1, N, dim_, key.mse_bits, ot);
+            // strides match. P2 Stage B: route through mse_score_pooled so
+            // OpenCL can amortize the K-state upload via its cl_mem pool
+            // when gpu_key_handle != nullptr; the default IBackend impl
+            // forwards straight to mse_score().
+            backend_->mse_score_pooled(qr_t, mse_packed_bh, norms_bh,
+                                       mse_.centroids().data(),
+                                       /*BH=*/1, N, dim_, key.mse_bits, ot,
+                                       gpu_key_handle);
             backend_->qjl_score(qs_t, signs_bh, res_bh, ot,
                                 /*BH=*/1, N, dim_, qjl_scale_, ot);
         }
