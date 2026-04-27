@@ -59,6 +59,33 @@ public:
                            int BH, int N, int D, int bits,
                            float* out) = 0;
 
+    // P2 Stage B: pooled-key variant that lets a backend amortize the
+    // per-call mse_packed upload by using a long-lived GPU buffer
+    // returned earlier from prepare_keys(). The default implementation
+    // just dispatches to mse_score(), ignoring the handle, so backends
+    // that don't have an upload bottleneck (CPU scalar, NEON, QNN/HTP)
+    // need not override.
+    //
+    // OpenCL overrides this to perform a clEnqueueWriteBuffer into the
+    // pooled cl_mem (cast back from gpu_key_handle) instead of a
+    // CL_MEM_COPY_HOST_PTR allocation per call. That collapses the
+    // 17–23 ms-per-attention-call upload bottleneck flagged in
+    // backend_factory.cpp.
+    //
+    // gpu_key_handle == nullptr is an explicit "fall back to the
+    // unpooled path" signal — used by the stateless attention bridge
+    // (no SessionEntry) and any session whose backend returned nullptr
+    // from prepare_keys().
+    virtual void mse_score_pooled(const float* q_rot,
+                                  const void* mse_packed,
+                                  const float* norms,
+                                  const float* centroids,
+                                  int BH, int N, int D, int bits,
+                                  float* out,
+                                  void* /*gpu_key_handle*/ = nullptr) {
+        mse_score(q_rot, mse_packed, norms, centroids, BH, N, D, bits, out);
+    }
+
     // Fused QJL correction score:
     //   out[bh, n] = mse_in[bh, n]
     //              + qjl_scale * res_norms[bh, n]

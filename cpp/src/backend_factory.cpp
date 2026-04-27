@@ -91,6 +91,13 @@ std::unique_ptr<IBackend> create_best_backend() {
     // it doesn't have the upload-per-call problem.
     //
     // Re-order this list once OpenCL ships prepare_keys().
+    //
+    // TODO(P2 Stage B follow-up): the OpenCL backend now overrides
+    // prepare_keys/release_keys/mse_score_pooled (P2 Stage B, this PR).
+    // The flip to OpenCL > CpuNeon is gated on an on-device latency
+    // measurement showing the pooled mse_score path lands at ≤ 3 ms per
+    // attention call (current NEON baseline is ~2 ms; OpenCL was 17–23 ms
+    // before pooling). Don't reorder until that data is in.
     static const BackendKind kPriority[] = {
         BackendKind::QnnHtp,
         BackendKind::CpuNeon,

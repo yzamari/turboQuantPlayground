@@ -80,9 +80,15 @@ public:
     // (already shaped to BH groups of N keys each).
     //
     // out shape: [BH, n_q, N], row-major.
+    //
+    // P2 Stage B: gpu_key_handle is forwarded to backend->mse_score_pooled()
+    // so OpenCL can amortize the per-call mse_packed upload via its
+    // session-lifetime cl_mem pool. nullptr selects the unpooled fallback
+    // path (default impl of mse_score_pooled just calls mse_score).
     void attention_score(const float* query, int BH, int n_q,
                          const ProdQuantized& key,  int N,
-                         float* out) const;
+                         float* out,
+                         void* gpu_key_handle = nullptr) const;
 
     const TurboQuantMSE& mse() const { return mse_; }
     const std::vector<float>& S() const { return S_; }   // [D, D] row-major
@@ -145,6 +151,17 @@ public:
     // calculation.
     size_t memory_bytes() const;
 
+    // P2 Stage B: cache the opaque GPU-key handle returned by
+    // IBackend::prepare_keys() at SessionEntry construction time. The
+    // cache forwards it through attention_scores() ->
+    // TurboQuantProd::attention_score() -> backend->mse_score_pooled().
+    // Defaults to nullptr — the cache then takes the unpooled path. The
+    // setter is called by attention_turboquant.cpp's session-cached
+    // path; callers building a TurboQuantKVCache directly (e.g. the
+    // host bench, parity tests) leave this alone.
+    void  set_gpu_key_handle(void* h) { gpu_key_handle_ = h; }
+    void* gpu_key_handle()      const { return gpu_key_handle_; }
+
 private:
     void flush_buffer_();
 
@@ -153,6 +170,7 @@ private:
     TurboQuantProd    key_quantizer_;
     int               BH_      = 0;
     int               seq_len_ = 0;
+    void*             gpu_key_handle_ = nullptr;
 
     // Quantized portion (oldest tokens).
     ProdQuantized     key_q_;

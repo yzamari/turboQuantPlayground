@@ -32,3 +32,13 @@ add_test(NAME attention_turboquant COMMAND tq_attention_turboquant_test)
 add_executable(tq_kv_cache_test kv_cache_test.cpp)
 target_link_libraries(tq_kv_cache_test PRIVATE turboquant)
 add_test(NAME kv_cache COMMAND tq_kv_cache_test)
+
+# P2 Stage B end-to-end plumbing for prepare_keys / release_keys /
+# mse_score_pooled. Uses a mock backend that wraps CPU-scalar so the
+# numerical contract is unchanged — only verifies the handle threads
+# correctly from SessionEntry through TurboQuantKVCache to the backend.
+add_executable(tq_attention_turboquant_pooled_test
+               attention_turboquant_pooled_test.cpp)
+target_link_libraries(tq_attention_turboquant_pooled_test PRIVATE turboquant)
+add_test(NAME attention_turboquant_pooled
+         COMMAND tq_attention_turboquant_pooled_test)
