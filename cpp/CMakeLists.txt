@@ -96,6 +96,12 @@ target_include_directories(turboquant
 )
 target_compile_features(turboquant PUBLIC cxx_std_17)
 
+# Android: kv_cache.cpp's flush_buffer_ logs to logcat via __android_log_print.
+# PUBLIC so the JNI .so consuming this static lib also picks up the link dep.
+if(ANDROID)
+    target_link_libraries(turboquant PUBLIC log)
+endif()
+
 # -----------------------------------------------------------------------------
 # Backends — each adds a static library and registers itself with the factory
 # via a TQ_REGISTER_BACKEND_* compile definition.
