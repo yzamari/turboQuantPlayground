@@ -155,5 +155,77 @@ int main() {
     for (float x : tq_masked) if (std::fabs(x) > 1e-6f) { mask_zero = false; break; }
     TQ_CHECK(mask_zero);
 
+    // ---- Session-cached path (Phase A2 plumbing for F3) ----
+    //
+    // Same Q/K/V, but routed through the (session_id, layer_il) entry
+    // path that holds the SessionEntry — exercises prepare_keys() /
+    // release_keys() lifecycle hooks. The session-cached path uses
+    // buffer_size=64 (recent-window unquantized) by design, so its
+    // numeric output differs from the stateless call (buffer_size=0,
+    // everything quantized). We assert against the FP32 reference and
+    // expect quality at least as good as stateless.
+    constexpr uint64_t kSessionId = 0xdeadbeefULL;
+    constexpr int      kLayer     = 0;
+
+    std::vector<float> tq_session(ref.size(), 0.f);
+    attention_turboquant(
+        q.data(), k.data(), v.data(),
+        BH, n_q, n_kv, D,
+        scale, /*mask=*/nullptr, tq_session.data(),
+        /*key_bits=*/3, /*value_bits=*/2, /*seed=*/42,
+        /*session_id=*/kSessionId, /*layer_il=*/kLayer);
+
+    const double cos_session = cosine_similarity(ref.data(), tq_session.data(), ref.size());
+    std::fprintf(stderr,
+        "attention_turboquant_test: session-cached cosine=%.4f (stateless=%.4f)\n",
+        cos_session, cos_full);
+    TQ_CHECK(cos_session >= 0.85);
+    // Session-cached keeps the recent 64 tokens unquantized → quality
+    // should be ≥ stateless. Allow tiny floating-point slack.
+    TQ_CHECK(cos_session >= cos_full - 1e-3);
+
+    // Repeat call against the same (session_id, layer_il) — exercises
+    // the cached-path branch (n_kv == cached_n: cache already has the
+    // full window, just compute attention).
+    std::vector<float> tq_session2(ref.size(), 0.f);
+    attention_turboquant(
+        q.data(), k.data(), v.data(),
+        BH, n_q, n_kv, D,
+        scale, nullptr, tq_session2.data(),
+        3, 2, 42, kSessionId, kLayer);
+    bool session_repeat_match = true;
+    for (size_t i = 0; i < tq_session.size(); ++i) {
+        if (std::fabs(double(tq_session[i]) - double(tq_session2[i])) > 1e-6) {
+            session_repeat_match = false;
+            break;
+        }
+    }
+    TQ_CHECK(session_repeat_match);
+
+    // Invalidate releases the prepare_keys handle. With the default no-op
+    // impl this just removes the SessionEntry; with OpenCL (Stage B) it
+    // releases the cl_mem buffer. Either way, must not crash, and the
+    // next call must rebuild the entry from scratch.
+    attention_turboquant_invalidate(kSessionId, kLayer);
+
+    std::vector<float> tq_session3(ref.size(), 0.f);
+    attention_turboquant(
+        q.data(), k.data(), v.data(),
+        BH, n_q, n_kv, D,
+        scale, nullptr, tq_session3.data(),
+        3, 2, 42, kSessionId, kLayer);
+    bool rebuild_match = true;
+    for (size_t i = 0; i < tq_session.size(); ++i) {
+        if (std::fabs(double(tq_session[i]) - double(tq_session3[i])) > 1e-6) {
+            rebuild_match = false;
+            break;
+        }
+    }
+    TQ_CHECK(rebuild_match);
+
+    // Cleanup so the static g_sessions map doesn't carry state into
+    // future test runs (matters when the test exits before the process).
+    attention_turboquant_invalidate(kSessionId, /*layer_il=*/-1);
+
     return tq_test::report_and_exit();
 }

@@ -51,11 +51,28 @@ struct SessionKeyHash {
 };
 struct SessionEntry {
     std::unique_ptr<TurboQuantKVCache> cache;
-    int    BH         = 0;
-    int    D          = 0;
-    int    key_bits   = 0;
-    int    value_bits = 0;
+    int        BH             = 0;
+    int        D              = 0;
+    int        key_bits       = 0;
+    int        value_bits     = 0;
+
+    // Phase A2 (F3) plumbing. The backend that owns gpu_key_handle (so we
+    // can release it on shape-mismatch reset / session invalidation, even
+    // if get_best_backend() now returns a different backend than the one
+    // that allocated the handle).
+    IBackend * backend        = nullptr;
+    void *     gpu_key_handle = nullptr;
 };
+
+// Release any backend-owned per-session GPU state. Safe to call on a
+// freshly-default-constructed SessionEntry (handle == nullptr → no-op).
+void release_session_gpu_state(SessionEntry & entry) {
+    if (entry.backend && entry.gpu_key_handle) {
+        entry.backend->release_keys(entry.gpu_key_handle);
+    }
+    entry.gpu_key_handle = nullptr;
+    entry.backend        = nullptr;
+}
 
 std::mutex g_session_mu;
 std::unordered_map<SessionKey, SessionEntry, SessionKeyHash> g_sessions;
@@ -73,6 +90,7 @@ SessionEntry & get_or_create_entry_locked(
         if (it->second.BH != BH || it->second.D != D ||
             it->second.key_bits != key_bits ||
             it->second.value_bits != value_bits) {
+            release_session_gpu_state(it->second);
             it->second = SessionEntry{};
         } else {
             return it->second;
@@ -84,6 +102,7 @@ SessionEntry & get_or_create_entry_locked(
     entry.D          = D;
     entry.key_bits   = key_bits;
     entry.value_bits = value_bits;
+    entry.backend    = backend;
 
     auto Pi = generate_pi_qr(D, seed);
     auto S  = generate_qjl_S(D, seed + 1000);
@@ -107,6 +126,14 @@ SessionEntry & get_or_create_entry_locked(
 
     entry.cache = std::make_unique<TurboQuantKVCache>(
         cfg, backend, std::move(Pi), std::move(S));
+
+    // Phase A2: ask the backend to allocate any persistent GPU buffers it
+    // wants to reuse across decode steps for this (session, layer). The
+    // default IBackend impl returns nullptr; only OpenCL (Stage B)
+    // overrides. Stored even if nullptr so release_session_gpu_state is
+    // symmetric.
+    entry.gpu_key_handle = backend->prepare_keys(BH, D, key_bits);
+
     return entry;
 }
 
@@ -240,11 +267,13 @@ void attention_turboquant(
     } else if (n_kv < cached_n) {
         // Cache regressed (e.g. context reset). Wipe and re-prefill.
         // Rebuild the entry with a fresh cache.
+        release_session_gpu_state(entry);
         entry = SessionEntry{};
         entry.BH         = BH;
         entry.D          = D;
         entry.key_bits   = key_bits;
         entry.value_bits = value_bits;
+        entry.backend    = backend;
         auto Pi = generate_pi_qr(D, seed);
         auto S  = generate_qjl_S(D, seed + 1000);
         TurboQuantKVCache::Config cfg;
@@ -256,6 +285,7 @@ void attention_turboquant(
         cfg.layer_idx        = layer_il;
         entry.cache = std::make_unique<TurboQuantKVCache>(
             cfg, backend, std::move(Pi), std::move(S));
+        entry.gpu_key_handle = backend->prepare_keys(BH, D, key_bits);
         entry.cache->prefill(k, v, BH, n_kv);
     }
     // n_kv == cached_n: cache already has the full window; just compute
@@ -271,12 +301,17 @@ void attention_turboquant(
 void attention_turboquant_invalidate(uint64_t session_id, int layer_il) {
     std::lock_guard<std::mutex> lk(g_session_mu);
     if (layer_il >= 0) {
-        g_sessions.erase({session_id, layer_il});
+        auto it = g_sessions.find({session_id, layer_il});
+        if (it != g_sessions.end()) {
+            release_session_gpu_state(it->second);
+            g_sessions.erase(it);
+        }
         return;
     }
     // layer_il < 0: drop all entries for this session.
     for (auto it = g_sessions.begin(); it != g_sessions.end(); ) {
         if (it->first.session_id == session_id) {
+            release_session_gpu_state(it->second);
             it = g_sessions.erase(it);
         } else {
             ++it;
