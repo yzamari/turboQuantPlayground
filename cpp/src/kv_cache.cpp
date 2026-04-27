@@ -15,6 +15,13 @@
 #  define TQ_HAVE_NEON 0
 #endif
 
+#if defined(__ANDROID__)
+#  include <android/log.h>
+#  define TQ_KV_LOGI(...) __android_log_print(ANDROID_LOG_INFO, "turboquant_kv", __VA_ARGS__)
+#else
+#  define TQ_KV_LOGI(...) ((void)0)
+#endif
+
 namespace turboquant {
 
 namespace {
@@ -448,6 +455,9 @@ void TurboQuantKVCache::flush_buffer_() {
 
     ++n_quant_;
     --n_buf_;
+
+    TQ_KV_LOGI("flush: seq_len=%d BH=%d D=%d n_buf=%d n_quant=%d",
+               seq_len_, BH, D, n_buf_, n_quant_);
 }
 
 void TurboQuantKVCache::attention_scores(const float* query, int BH, int n_q,
