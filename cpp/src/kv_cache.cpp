@@ -70,6 +70,106 @@ inline void saxpy_inplace_f32(float* y, float a, const float* x, int n) {
 #endif
 }
 
+// Append `new_q` (n_vec=BH, one row per BH) into `old_q` (n_vec=BH*old_per_bh,
+// per-BH rows contiguous) so the result holds (old_per_bh + 1) rows per BH
+// in the same BH-major layout TurboQuantKVCache uses for key_q_/value_q_.
+ProdQuantized merge_prod_append_per_bh(const ProdQuantized& old_q,
+                                       const ProdQuantized& new_q,
+                                       int BH, int old_per_bh) {
+    const int new_per_bh   = old_per_bh + 1;
+    const size_t mse_row   = static_cast<size_t>(old_q.packed_len_mse);
+    const size_t sig_row   = static_cast<size_t>(old_q.packed_len_signs);
+
+    ProdQuantized r;
+    r.n_vec            = BH * new_per_bh;
+    r.d                = old_q.d;
+    r.mse_bits         = old_q.mse_bits;
+    r.packed_len_mse   = old_q.packed_len_mse;
+    r.packed_len_signs = old_q.packed_len_signs;
+    r.mse_indices   .assign(static_cast<size_t>(r.n_vec) * mse_row, 0);
+    r.qjl_signs     .assign(static_cast<size_t>(r.n_vec) * sig_row, 0);
+    r.norms         .assign(r.n_vec, 0.f);
+    r.residual_norms.assign(r.n_vec, 0.f);
+
+    for (int b = 0; b < BH; ++b) {
+        const size_t old_off_mse = static_cast<size_t>(b) * old_per_bh * mse_row;
+        const size_t new_off_mse = static_cast<size_t>(b) * new_per_bh * mse_row;
+        std::memcpy(r.mse_indices.data() + new_off_mse,
+                    old_q.mse_indices.data() + old_off_mse,
+                    static_cast<size_t>(old_per_bh) * mse_row);
+        std::memcpy(r.mse_indices.data() + new_off_mse + static_cast<size_t>(old_per_bh) * mse_row,
+                    new_q.mse_indices.data() + static_cast<size_t>(b) * mse_row,
+                    mse_row);
+
+        const size_t old_off_sig = static_cast<size_t>(b) * old_per_bh * sig_row;
+        const size_t new_off_sig = static_cast<size_t>(b) * new_per_bh * sig_row;
+        std::memcpy(r.qjl_signs.data() + new_off_sig,
+                    old_q.qjl_signs.data() + old_off_sig,
+                    static_cast<size_t>(old_per_bh) * sig_row);
+        std::memcpy(r.qjl_signs.data() + new_off_sig + static_cast<size_t>(old_per_bh) * sig_row,
+                    new_q.qjl_signs.data() + static_cast<size_t>(b) * sig_row,
+                    sig_row);
+
+        const size_t old_norms_off = static_cast<size_t>(b) * old_per_bh;
+        const size_t new_norms_off = static_cast<size_t>(b) * new_per_bh;
+        std::memcpy(r.norms.data() + new_norms_off,
+                    old_q.norms.data() + old_norms_off,
+                    static_cast<size_t>(old_per_bh) * sizeof(float));
+        r.norms[new_norms_off + old_per_bh] = new_q.norms[b];
+        std::memcpy(r.residual_norms.data() + new_norms_off,
+                    old_q.residual_norms.data() + old_norms_off,
+                    static_cast<size_t>(old_per_bh) * sizeof(float));
+        r.residual_norms[new_norms_off + old_per_bh] = new_q.residual_norms[b];
+    }
+    return r;
+}
+
+ValueQuantized merge_value_append_per_bh(const ValueQuantized& old_v,
+                                         const ValueQuantized& new_v,
+                                         int BH, int old_per_bh) {
+    const int new_per_bh = old_per_bh + 1;
+    const size_t data_row = static_cast<size_t>(old_v.packed_d);
+    const size_t grp_row  = static_cast<size_t>(old_v.n_groups);
+
+    ValueQuantized r;
+    r.n_vec      = BH * new_per_bh;
+    r.d          = old_v.d;
+    r.bits       = old_v.bits;
+    r.group_size = old_v.group_size;
+    r.n_groups   = old_v.n_groups;
+    r.packed_d   = old_v.packed_d;
+    r.data  .assign(static_cast<size_t>(r.n_vec) * data_row, 0);
+    r.scales.assign(static_cast<size_t>(r.n_vec) * grp_row,  0.f);
+    r.zeros .assign(static_cast<size_t>(r.n_vec) * grp_row,  0.f);
+
+    for (int b = 0; b < BH; ++b) {
+        const size_t old_off_d = static_cast<size_t>(b) * old_per_bh * data_row;
+        const size_t new_off_d = static_cast<size_t>(b) * new_per_bh * data_row;
+        std::memcpy(r.data.data() + new_off_d,
+                    old_v.data.data() + old_off_d,
+                    static_cast<size_t>(old_per_bh) * data_row);
+        std::memcpy(r.data.data() + new_off_d + static_cast<size_t>(old_per_bh) * data_row,
+                    new_v.data.data() + static_cast<size_t>(b) * data_row,
+                    data_row);
+
+        const size_t old_off_g = static_cast<size_t>(b) * old_per_bh * grp_row;
+        const size_t new_off_g = static_cast<size_t>(b) * new_per_bh * grp_row;
+        std::memcpy(r.scales.data() + new_off_g,
+                    old_v.scales.data() + old_off_g,
+                    static_cast<size_t>(old_per_bh) * grp_row * sizeof(float));
+        std::memcpy(r.scales.data() + new_off_g + static_cast<size_t>(old_per_bh) * grp_row,
+                    new_v.scales.data() + static_cast<size_t>(b) * grp_row,
+                    grp_row * sizeof(float));
+        std::memcpy(r.zeros.data() + new_off_g,
+                    old_v.zeros.data() + old_off_g,
+                    static_cast<size_t>(old_per_bh) * grp_row * sizeof(float));
+        std::memcpy(r.zeros.data() + new_off_g + static_cast<size_t>(old_per_bh) * grp_row,
+                    new_v.zeros.data() + static_cast<size_t>(b) * grp_row,
+                    grp_row * sizeof(float));
+    }
+    return r;
+}
+
 }  // namespace
 
 // -----------------------------------------------------------------------------
@@ -227,32 +327,25 @@ void TurboQuantKVCache::prefill(const float* keys, const float* values,
 
 // Append one decode-step (key, value) of shape [BH, D] to the cache.
 //
-// Implementation note: this v1 grows the unquantized recent buffer
-// indefinitely instead of flushing the oldest slot into the quantized
-// portion. Reasons:
+// Strategy: fixed-buffer + flush-on-overflow. When the new slot would push
+// n_buf_ above cfg_.buffer_size, the oldest slot is quantized into
+// key_q_/value_q_ first (see flush_buffer_) and then the new slot is
+// grown onto the buffer. This bounds memory at
+// O(BH * buffer_size * D + BH * (seq_len - buffer_size) * <compressed>)
+// regardless of how long the decode runs.
 //
-//  - Flushing would require quantizing one new token and grafting its
-//    slot into key_q_ / value_q_'s [BH, n_quant, D] layout — inserting
-//    at BH-strided offsets across mse_indices, qjl_signs, norms,
-//    residual_norms, value scales/zeros, and packed bytes. That's
-//    surgical and easy to get wrong.
-//
-//  - For chat-length responses (≤ ~1024 decode tokens) the buffer
-//    growing by 1 per token is bounded: 1024 * BH=32 * D=64 * 16
-//    layers * 4 bytes ≈ 134 MB — still less than the FP16 baseline's
-//    KV cache.
-//
-//  - The quantized portion built by prefill stays compressed; we only
-//    lose compression on the *decoded* tokens, which is exactly what
-//    the recent-buffer strategy was designed for anyway.
-//
-// True flush (move oldest buffer slot into key_q_/value_q_) is a P0.4
-// follow-up. When it lands, this function should switch to a
-// fixed-buffer + flush-on-overflow strategy.
+// The `while` loop covers two cases: (a) steady state — at most one flush
+// per append; (b) legacy-state recovery — a session that ran under the
+// previous grow-only append has n_buf_ >> buffer_size on entry and bleeds
+// down one slot per call until the invariant is restored.
 void TurboQuantKVCache::append(const float* key, const float* value, int BH) {
     if (BH != BH_) {
         throw std::invalid_argument("append: BH mismatch");
     }
+    while (n_buf_ + 1 > cfg_.buffer_size) {
+        flush_buffer_();
+    }
+
     const int D = cfg_.head_dim;
     const int new_n_buf = n_buf_ + 1;
 
@@ -291,12 +384,70 @@ void TurboQuantKVCache::append(const float* key, const float* value, int BH) {
     ++seq_len_;
 }
 
+// Move the oldest buffer slot (per BH) into the compressed quantized
+// portion. Called by append() when the buffer would otherwise overflow
+// cfg_.buffer_size.
+//
+// Steps:
+//  1. Gather the oldest slot from each BH into a contiguous [BH, D] dense
+//     array (one for keys, one for values).
+//  2. Run the existing TurboQuantProd / quantize_values pipelines on those
+//     BH rows.
+//  3. Append the new BH rows into key_q_ / value_q_ at position n_quant_
+//     for each BH, preserving the BH-major row layout the rest of the
+//     class relies on.
+//  4. Shift each BH's buffer left by 1 (drop the slot we just flushed).
+//  5. Update counters: ++n_quant_, --n_buf_. seq_len_ is unchanged —
+//     flush moves data within the cache, it doesn't add or drop tokens.
 void TurboQuantKVCache::flush_buffer_() {
-    // Not used by the v1 append above (which grows the buffer instead of
-    // flushing). When the proper fixed-buffer + flush strategy lands,
-    // this should quantize key_buf_[*, 0, *] / value_buf_[*, 0, *] and
-    // append-with-BH-stride to key_q_ / value_q_, then shift the buffer.
-    throw std::logic_error("TurboQuantKVCache::flush_buffer_ not yet implemented (post-P0)");
+    if (n_buf_ <= 0) {
+        throw std::logic_error("flush_buffer_: nothing to flush (n_buf_ == 0)");
+    }
+    const int BH = BH_;
+    const int D  = cfg_.head_dim;
+
+    std::vector<float> oldest_k(static_cast<size_t>(BH) * D);
+    std::vector<float> oldest_v(static_cast<size_t>(BH) * D);
+    for (int b = 0; b < BH; ++b) {
+        std::memcpy(oldest_k.data() + static_cast<size_t>(b) * D,
+                    key_buf_  .data() + static_cast<size_t>(b) * n_buf_ * D,
+                    static_cast<size_t>(D) * sizeof(float));
+        std::memcpy(oldest_v.data() + static_cast<size_t>(b) * D,
+                    value_buf_.data() + static_cast<size_t>(b) * n_buf_ * D,
+                    static_cast<size_t>(D) * sizeof(float));
+    }
+
+    auto new_kq = key_quantizer_.quantize(oldest_k.data(), BH);
+    auto new_vq = quantize_values(oldest_v.data(), BH, D,
+                                  cfg_.value_bits, cfg_.value_group_size);
+
+    if (n_quant_ == 0) {
+        // First flush — nothing to merge with; the new BH-row arrays already
+        // sit in BH-major layout (one row per BH) which is exactly what the
+        // rest of the class expects for n_quant_ == 1.
+        key_q_   = std::move(new_kq);
+        value_q_ = std::move(new_vq);
+    } else {
+        key_q_   = merge_prod_append_per_bh (key_q_,   new_kq, BH, n_quant_);
+        value_q_ = merge_value_append_per_bh(value_q_, new_vq, BH, n_quant_);
+    }
+
+    const int new_n_buf = n_buf_ - 1;
+    std::vector<float> new_kbuf(static_cast<size_t>(BH) * new_n_buf * D);
+    std::vector<float> new_vbuf(static_cast<size_t>(BH) * new_n_buf * D);
+    for (int b = 0; b < BH; ++b) {
+        std::memcpy(new_kbuf.data() + static_cast<size_t>(b) * new_n_buf * D,
+                    key_buf_.data() + static_cast<size_t>(b) * n_buf_ * D + D,
+                    static_cast<size_t>(new_n_buf) * D * sizeof(float));
+        std::memcpy(new_vbuf.data() + static_cast<size_t>(b) * new_n_buf * D,
+                    value_buf_.data() + static_cast<size_t>(b) * n_buf_ * D + D,
+                    static_cast<size_t>(new_n_buf) * D * sizeof(float));
+    }
+    key_buf_   = std::move(new_kbuf);
+    value_buf_ = std::move(new_vbuf);
+
+    ++n_quant_;
+    --n_buf_;
 }
 
 void TurboQuantKVCache::attention_scores(const float* query, int BH, int n_q,
