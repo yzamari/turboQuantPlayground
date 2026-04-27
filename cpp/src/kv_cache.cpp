@@ -8,7 +8,69 @@
 #include <cstring>
 #include <stdexcept>
 
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+#  include <arm_neon.h>
+#  define TQ_HAVE_NEON 1
+#else
+#  define TQ_HAVE_NEON 0
+#endif
+
 namespace turboquant {
+
+namespace {
+
+// Horizontal dot product: sum_k a[k] * b[k]. NEON path uses two parallel
+// f32x4 accumulators (better ILP on Cortex-A7xx / Apple Firestorm) and
+// folds the tail scalar. Scalar fallback keeps the original double-precision
+// accumulator to preserve the host x86 ctest baseline.
+inline float dot_f32(const float* a, const float* b, int n) {
+#if TQ_HAVE_NEON
+    float32x4_t acc0 = vdupq_n_f32(0.f);
+    float32x4_t acc1 = vdupq_n_f32(0.f);
+    int k = 0;
+    for (; k + 8 <= n; k += 8) {
+        acc0 = vfmaq_f32(acc0, vld1q_f32(a + k),     vld1q_f32(b + k));
+        acc1 = vfmaq_f32(acc1, vld1q_f32(a + k + 4), vld1q_f32(b + k + 4));
+    }
+    float32x4_t acc = vaddq_f32(acc0, acc1);
+    if (k + 4 <= n) {
+        acc = vfmaq_f32(acc, vld1q_f32(a + k), vld1q_f32(b + k));
+        k += 4;
+    }
+#  if defined(__aarch64__)
+    float s = vaddvq_f32(acc);
+#  else
+    float32x2_t s2 = vadd_f32(vget_low_f32(acc), vget_high_f32(acc));
+    s2 = vpadd_f32(s2, s2);
+    float s = vget_lane_f32(s2, 0);
+#  endif
+    for (; k < n; ++k) s += a[k] * b[k];
+    return s;
+#else
+    double s = 0.0;
+    for (int k = 0; k < n; ++k) s += static_cast<double>(a[k]) * b[k];
+    return static_cast<float>(s);
+#endif
+}
+
+// In-place SAXPY: y[k] += a * x[k] for k in [0, n).
+inline void saxpy_inplace_f32(float* y, float a, const float* x, int n) {
+#if TQ_HAVE_NEON
+    const float32x4_t a_v = vdupq_n_f32(a);
+    int k = 0;
+    for (; k + 4 <= n; k += 4) {
+        float32x4_t y_v = vld1q_f32(y + k);
+        float32x4_t x_v = vld1q_f32(x + k);
+        y_v = vfmaq_f32(y_v, x_v, a_v);
+        vst1q_f32(y + k, y_v);
+    }
+    for (; k < n; ++k) y[k] += a * x[k];
+#else
+    for (int k = 0; k < n; ++k) y[k] += a * x[k];
+#endif
+}
+
+}  // namespace
 
 // -----------------------------------------------------------------------------
 // Per-group asymmetric value quantization (matches Python kv_cache.quantize_values).
@@ -267,11 +329,7 @@ void TurboQuantKVCache::attention_scores(const float* query, int BH, int n_q,
                 float* dst = out_scores + ((static_cast<size_t>(b) * n_q + t) * S) + n_quant_;
                 for (int j = 0; j < n_buf_; ++j) {
                     const float* kv = k_bh + static_cast<size_t>(j) * cfg_.head_dim;
-                    double s = 0.0;
-                    for (int k = 0; k < cfg_.head_dim; ++k) {
-                        s += static_cast<double>(qv[k]) * kv[k];
-                    }
-                    dst[j] = static_cast<float>(s) * scale;
+                    dst[j] = dot_f32(qv, kv, cfg_.head_dim) * scale;
                 }
             }
         }
@@ -312,8 +370,7 @@ void TurboQuantKVCache::attend(const float* weights, int BH, int n_q,
                 for (int j = 0; j < n_buf_; ++j) {
                     const float* vj = value_buf_.data()
                                     + ((static_cast<size_t>(b) * n_buf_ + j) * D);
-                    float wj = w[j];
-                    for (int k = 0; k < D; ++k) o[k] += wj * vj[k];
+                    saxpy_inplace_f32(o, w[j], vj, D);
                 }
             }
         }

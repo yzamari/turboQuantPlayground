@@ -25,3 +25,10 @@ add_test(NAME parity COMMAND tq_parity_test)
 add_executable(tq_attention_turboquant_test attention_turboquant_test.cpp)
 target_link_libraries(tq_attention_turboquant_test PRIVATE turboquant)
 add_test(NAME attention_turboquant COMMAND tq_attention_turboquant_test)
+
+# TurboQuantKVCache buffer-portion parity (F2 NEON guard).
+# Pins the numerical contract of attention_scores / attend on the
+# unquantized buffer path so the NEON inner loop can be introduced safely.
+add_executable(tq_kv_cache_test kv_cache_test.cpp)
+target_link_libraries(tq_kv_cache_test PRIVATE turboquant)
+add_test(NAME kv_cache COMMAND tq_kv_cache_test)
