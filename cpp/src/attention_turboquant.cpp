@@ -221,27 +221,22 @@ void attention_turboquant(
         // First call for this (session, layer): full prefill.
         entry.cache->prefill(k, v, BH, n_kv);
     } else if (n_kv > cached_n) {
-        // Cache grew (decode added tokens). Ideally we'd append() the
-        // new tokens, but TurboQuantKVCache::append() is currently
-        // unimplemented (kv_cache.cpp:169 throws std::logic_error,
-        // a holdover from the P0 cut). Fall back to a full re-prefill
-        // — wastes the rotate+quantize work for the previously cached
-        // slice but stays safe. Implementing append() is the next
-        // perf lever; until then this path costs O(n_kv) per decode
-        // step instead of O(1).
-        entry.cache = nullptr;  // drop and rebuild
-        auto Pi = generate_pi_qr(D, seed);
-        auto S  = generate_qjl_S(D, seed + 1000);
-        TurboQuantKVCache::Config cfg;
-        cfg.head_dim         = D;
-        cfg.key_bits         = key_bits;
-        cfg.value_bits       = value_bits;
-        cfg.value_group_size = 32;
-        cfg.buffer_size      = 64;  // recent-window full precision (chat coherence)
-        cfg.layer_idx        = layer_il;
-        entry.cache = std::make_unique<TurboQuantKVCache>(
-            cfg, backend, std::move(Pi), std::move(S));
-        entry.cache->prefill(k, v, BH, n_kv);
+        // Cache grew (decode added tokens). Append the new tokens
+        // [cached_n, n_kv). Each call grows the unquantized recent
+        // buffer by one slot — O(BH * D) per appended token (amortized
+        // for chat-length decodes). This is the P2.1c fast-decode path:
+        // no full re-prefill, only the new slice goes through.
+        for (int t = cached_n; t < n_kv; ++t) {
+            std::vector<float> kt(static_cast<size_t>(BH) * D);
+            std::vector<float> vt(static_cast<size_t>(BH) * D);
+            for (int b = 0; b < BH; ++b) {
+                const float * ksrc = k + (static_cast<size_t>(b) * n_kv + t) * D;
+                const float * vsrc = v + (static_cast<size_t>(b) * n_kv + t) * D;
+                std::copy(ksrc, ksrc + D, kt.data() + static_cast<size_t>(b) * D);
+                std::copy(vsrc, vsrc + D, vt.data() + static_cast<size_t>(b) * D);
+            }
+            entry.cache->append(kt.data(), vt.data(), BH);
+        }
     } else if (n_kv < cached_n) {
         // Cache regressed (e.g. context reset). Wipe and re-prefill.
         // Rebuild the entry with a fresh cache.
