@@ -223,9 +223,76 @@ int main() {
     }
     TQ_CHECK(rebuild_match);
 
+    // ---- Decode-loop simulation (the on-device chat path) ----
+    //
+    // Synthetic version of what llama.cpp does for a chat decode: prefill
+    // with the prompt, then call attention_turboquant() once per decode
+    // token with n_kv = cached_n + 1. This exercises the
+    // `else if (n_kv > cached_n)` append-loop branch in
+    // attention_turboquant.cpp — exactly the path that hits the
+    // TurboQuantKVCache::append() flush-on-overflow guard.
+    //
+    // With buffer_size=64 (the session-cached default), prefill at
+    // n_kv=70 leaves n_buf_=64, n_quant_=6. Each decode token grows the
+    // buffer to 65, triggers the while-flush, drops back to 64, and
+    // appends. So decode_n calls => decode_n flushes. Cosine of the
+    // post-decode-step attention output vs an FP32 reference must
+    // stay above the bench threshold (0.85) — a sanity check that the
+    // cumulative quantization across many flushes hasn't broken the
+    // attention math.
+    constexpr uint64_t kDecodeSessionId = 0xc0ffeeULL;
+    constexpr int      kDecodeLayer     = 0;
+    constexpr int      kPrefillN        = 70;   // > buffer_size(64) → first flush is immediate
+    constexpr int      kDecodeSteps     = 16;   // 16 decode tokens => 16 flushes expected
+    constexpr int      kFinalN          = kPrefillN + kDecodeSteps;
+
+    std::vector<float> q_decode(static_cast<size_t>(BH) * 1 * D);
+    std::vector<float> k_decode(static_cast<size_t>(BH) * kFinalN * D);
+    std::vector<float> v_decode(static_cast<size_t>(BH) * kFinalN * D);
+    fill_random(q_decode, 0xdec0de01u);
+    fill_random(k_decode, 0xdec0de02u);
+    fill_random(v_decode, 0xdec0de03u);
+
+    std::vector<float> out_decode(static_cast<size_t>(BH) * 1 * D);
+
+    // Step 1 — prefill via first attention call (cached_n=0 → prefill).
+    attention_turboquant(
+        q_decode.data(), k_decode.data(), v_decode.data(),
+        BH, /*n_q=*/1, /*n_kv=*/kPrefillN, D,
+        scale, /*mask=*/nullptr, out_decode.data(),
+        3, 2, 42, kDecodeSessionId, kDecodeLayer);
+
+    // Step 2..kDecodeSteps+1 — each call grows n_kv by 1, exercising
+    // the append+flush branch.
+    for (int step = 1; step <= kDecodeSteps; ++step) {
+        const int n_kv_now = kPrefillN + step;
+        attention_turboquant(
+            q_decode.data(), k_decode.data(), v_decode.data(),
+            BH, /*n_q=*/1, n_kv_now, D,
+            scale, nullptr, out_decode.data(),
+            3, 2, 42, kDecodeSessionId, kDecodeLayer);
+        // Output must be non-NaN at every step.
+        bool finite = true;
+        for (float x : out_decode) if (!std::isfinite(x)) { finite = false; break; }
+        TQ_CHECK(finite);
+    }
+
+    // Final attention output cosine vs FP32 reference at the same
+    // n_kv. Must clear the bench threshold (0.85).
+    std::vector<float> ref_decode;
+    reference_attention(q_decode.data(), k_decode.data(), v_decode.data(),
+                        BH, /*n_q=*/1, kFinalN, D, scale, ref_decode);
+    const double cos_decode = cosine_similarity(
+        ref_decode.data(), out_decode.data(), ref_decode.size());
+    std::fprintf(stderr,
+        "attention_turboquant_test: decode-loop after %d steps (final n_kv=%d) cosine=%.4f\n",
+        kDecodeSteps, kFinalN, cos_decode);
+    TQ_CHECK(cos_decode >= 0.85);
+
     // Cleanup so the static g_sessions map doesn't carry state into
     // future test runs (matters when the test exits before the process).
-    attention_turboquant_invalidate(kSessionId, /*layer_il=*/-1);
+    attention_turboquant_invalidate(kSessionId,        /*layer_il=*/-1);
+    attention_turboquant_invalidate(kDecodeSessionId,  /*layer_il=*/-1);
 
     return tq_test::report_and_exit();
 }

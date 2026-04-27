@@ -97,9 +97,17 @@ void init_backends_once() {
     std::lock_guard<std::mutex> lk(g_backend_init_mu);
     if (g_backend_inited.load(std::memory_order_relaxed)) return;
     llama_log_set([](enum ggml_log_level level, const char * text, void * /*ud*/) {
-        if (level >= GGML_LOG_LEVEL_WARN) {
-            __android_log_print(ANDROID_LOG_INFO, "llama", "%s", text);
+        // Mirror mtmd_jni's full-level bridge so LOG_INF lines (e.g. the
+        // mtmd-OpenCL Phase 1 markers and other init diagnostics) reach
+        // logcat instead of being dropped at the WARN threshold.
+        int prio = ANDROID_LOG_INFO;
+        switch (level) {
+            case GGML_LOG_LEVEL_ERROR: prio = ANDROID_LOG_ERROR; break;
+            case GGML_LOG_LEVEL_WARN:  prio = ANDROID_LOG_WARN;  break;
+            case GGML_LOG_LEVEL_DEBUG: prio = ANDROID_LOG_DEBUG; break;
+            default:                   prio = ANDROID_LOG_INFO;  break;
         }
+        __android_log_print(prio, "llama", "%s", text);
     }, nullptr);
     ggml_backend_load_all();
     llama_set_turboquant_attn_fn(tq_attn_thunk);

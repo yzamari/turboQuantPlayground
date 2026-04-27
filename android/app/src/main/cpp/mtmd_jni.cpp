@@ -74,11 +74,28 @@ void init_backends_once() {
     if (g_backend_inited.load(std::memory_order_acquire)) return;
     std::lock_guard<std::mutex> lk(g_backend_init_mu);
     if (g_backend_inited.load(std::memory_order_relaxed)) return;
-    llama_log_set([](enum ggml_log_level level, const char * text, void * /*ud*/) {
-        if (level >= GGML_LOG_LEVEL_WARN) {
-            __android_log_print(ANDROID_LOG_INFO, "llama", "%s", text);
+    auto bridge = [](enum ggml_log_level level, const char * text, void * /*ud*/) {
+        // Bridge every llama/ggml/clip log to logcat at its proper Android
+        // level. Was filtered to >= WARN previously, which dropped the
+        // mtmd-OpenCL Phase 1 markers (clip.cpp uses LOG_INF for "CLIP
+        // using ... backend", "MTMD_VISION_GPU_DISABLE is set", and the
+        // Adreno 740 bypass) so F4 verification couldn't see whether the
+        // GPU placement actually triggered.
+        int prio = ANDROID_LOG_INFO;
+        switch (level) {
+            case GGML_LOG_LEVEL_ERROR: prio = ANDROID_LOG_ERROR; break;
+            case GGML_LOG_LEVEL_WARN:  prio = ANDROID_LOG_WARN;  break;
+            case GGML_LOG_LEVEL_DEBUG: prio = ANDROID_LOG_DEBUG; break;
+            default:                   prio = ANDROID_LOG_INFO;  break;
         }
-    }, nullptr);
+        __android_log_print(prio, "llama", "%s", text);
+    };
+    llama_log_set(bridge, nullptr);
+    // clip.cpp / mtmd.cpp use a SEPARATE g_logger_state inside the mtmd
+    // library (see clip-impl.h:LOG_INF -> clip_log_internal). llama_log_set
+    // does not reach it. mtmd_log_set is the public hook for that
+    // namespace and routes the same way to logcat.
+    mtmd_log_set(bridge, nullptr);
     ggml_backend_load_all();
     LOGI("ggml backends loaded");
     g_backend_inited.store(true, std::memory_order_release);
@@ -247,12 +264,19 @@ Java_com_yzamari_turboquant_assistant_MtmdNative_loadModel(
     // ---- 3. Load the mmproj / vision encoder ---------------------------
     const double t_mm0 = now_ms();
     mtmd_context_params vparams = mtmd_context_params_default();
-    // SigLIP on CPU even when LLM is on Adreno: granular logs (see
-    // describe()) show mtmd_helper_eval_chunks hangs forever when SigLIP
-    // is on Adreno OpenCL — confirmed on Tab S9+ (SD 8 Gen 2, Adreno 740).
-    // CPU SigLIP for SmolVLM-256M is ~100-300 ms, totally fine for live.
-    // The LLM keeps Adreno via gpuLayers (separate path inside eval_chunks).
-    vparams.use_gpu       = false;
+    // Phase 1 (Path C — mtmd-on-OpenCL): SigLIP can now run on Adreno
+    // because clip.cpp itself does the SoC bypass for the known-hung
+    // Adreno 740 (Tab S9+ kalama). On Adreno 750 (S24 Ultra) and other
+    // safe SoCs we get the GPU vision tower (~15× faster than CPU per
+    // the design doc). The pre-Phase-1 hardcoded `use_gpu = false` was
+    // the app-side mitigation that this Phase 1 work replaces.
+    //
+    // Escape hatch if a new SoC turns out to hang: set the
+    // MTMD_VISION_GPU_DISABLE env var (any non-empty value) via
+    //   adb shell setprop debug.com.yzamari.turboquant.mtmd_gpu 0
+    // (we'd need to wire that prop -> env var). For now the Adreno 740
+    // bypass in clip.cpp is the only known case.
+    vparams.use_gpu       = true;
     vparams.print_timings = false;
     vparams.n_threads     = sess->n_threads;
     vparams.warmup        = false;
