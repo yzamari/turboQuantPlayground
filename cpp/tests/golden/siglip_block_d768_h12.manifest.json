@@ -1,0 +1,219 @@
+{
+  "format_version": 1,
+  "model": "google/siglip-base-patch16-224",
+  "block_index": 0,
+  "seq_len": 196,
+  "hidden_dim": 768,
+  "num_heads": 12,
+  "mlp_dim": 3072,
+  "layernorm_eps": 1e-06,
+  "input_seed": 314159,
+  "tensors_file": "siglip_block_d768_h12.bin",
+  "tensors": {
+    "input": {
+      "offset": 0,
+      "nbytes": 602112,
+      "shape": [
+        196,
+        768
+      ],
+      "dtype": "float32"
+    },
+    "ln1_out": {
+      "offset": 602112,
+      "nbytes": 602112,
+      "shape": [
+        196,
+        768
+      ],
+      "dtype": "float32"
+    },
+    "attn_out": {
+      "offset": 1204224,
+      "nbytes": 602112,
+      "shape": [
+        196,
+        768
+      ],
+      "dtype": "float32"
+    },
+    "attn_residual": {
+      "offset": 1806336,
+      "nbytes": 602112,
+      "shape": [
+        196,
+        768
+      ],
+      "dtype": "float32"
+    },
+    "ln2_out": {
+      "offset": 2408448,
+      "nbytes": 602112,
+      "shape": [
+        196,
+        768
+      ],
+      "dtype": "float32"
+    },
+    "mlp_out": {
+      "offset": 3010560,
+      "nbytes": 602112,
+      "shape": [
+        196,
+        768
+      ],
+      "dtype": "float32"
+    },
+    "output": {
+      "offset": 3612672,
+      "nbytes": 602112,
+      "shape": [
+        196,
+        768
+      ],
+      "dtype": "float32"
+    }
+  },
+  "weights_file": "siglip_block_d768_h12.weights.bin",
+  "weights": {
+    "ln1_gamma": {
+      "offset": 0,
+      "nbytes": 3072,
+      "shape": [
+        768
+      ],
+      "dtype": "float32"
+    },
+    "ln1_beta": {
+      "offset": 3072,
+      "nbytes": 3072,
+      "shape": [
+        768
+      ],
+      "dtype": "float32"
+    },
+    "q_w": {
+      "offset": 6144,
+      "nbytes": 2359296,
+      "shape": [
+        768,
+        768
+      ],
+      "dtype": "float32"
+    },
+    "q_b": {
+      "offset": 2365440,
+      "nbytes": 3072,
+      "shape": [
+        768
+      ],
+      "dtype": "float32"
+    },
+    "k_w": {
+      "offset": 2368512,
+      "nbytes": 2359296,
+      "shape": [
+        768,
+        768
+      ],
+      "dtype": "float32"
+    },
+    "k_b": {
+      "offset": 4727808,
+      "nbytes": 3072,
+      "shape": [
+        768
+      ],
+      "dtype": "float32"
+    },
+    "v_w": {
+      "offset": 4730880,
+      "nbytes": 2359296,
+      "shape": [
+        768,
+        768
+      ],
+      "dtype": "float32"
+    },
+    "v_b": {
+      "offset": 7090176,
+      "nbytes": 3072,
+      "shape": [
+        768
+      ],
+      "dtype": "float32"
+    },
+    "o_w": {
+      "offset": 7093248,
+      "nbytes": 2359296,
+      "shape": [
+        768,
+        768
+      ],
+      "dtype": "float32"
+    },
+    "o_b": {
+      "offset": 9452544,
+      "nbytes": 3072,
+      "shape": [
+        768
+      ],
+      "dtype": "float32"
+    },
+    "ln2_gamma": {
+      "offset": 9455616,
+      "nbytes": 3072,
+      "shape": [
+        768
+      ],
+      "dtype": "float32"
+    },
+    "ln2_beta": {
+      "offset": 9458688,
+      "nbytes": 3072,
+      "shape": [
+        768
+      ],
+      "dtype": "float32"
+    },
+    "mlp_up_w": {
+      "offset": 9461760,
+      "nbytes": 9437184,
+      "shape": [
+        3072,
+        768
+      ],
+      "dtype": "float32"
+    },
+    "mlp_up_b": {
+      "offset": 18898944,
+      "nbytes": 12288,
+      "shape": [
+        3072
+      ],
+      "dtype": "float32"
+    },
+    "mlp_dn_w": {
+      "offset": 18911232,
+      "nbytes": 9437184,
+      "shape": [
+        768,
+        3072
+      ],
+      "dtype": "float32"
+    },
+    "mlp_dn_b": {
+      "offset": 28348416,
+      "nbytes": 3072,
+      "shape": [
+        768
+      ],
+      "dtype": "float32"
+    }
+  },
+  "acceptance": {
+    "cosine_min": 0.99,
+    "abs_error_max_fp16": 0.001,
+    "abs_error_max_fp32": 0.0001
+  }
+}
