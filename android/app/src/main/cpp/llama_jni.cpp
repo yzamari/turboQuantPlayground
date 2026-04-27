@@ -57,11 +57,22 @@ struct Session {
 // init_backends_once() time to llama_set_turboquant_attn_fn(). The fork's
 // custom ggml op (ggml-custom-turboquant.c) calls this when kvType=3 builds
 // a llama_kv_cache_turboquant cache and flash-attn is off.
+//
+// session is the kv_cache_turboquant pointer (opaque to us); layer_il is
+// the transformer layer index. We forward both into libturboquant so it
+// can cache prepared K-state per (session, layer) and amortize the rotate +
+// quantize work across decode steps (Phase A2).
 extern "C" void tq_attn_thunk(
+    const void * session, int layer_il,
     const float * q, const float * k, const float * v,
     int BH, int n_q, int n_kv, int D,
     float scale, const float * mask, float * out) {
-    turboquant::attention_turboquant(q, k, v, BH, n_q, n_kv, D, scale, mask, out);
+    const uint64_t session_id = reinterpret_cast<uintptr_t>(session);
+    turboquant::attention_turboquant(
+        q, k, v, BH, n_q, n_kv, D, scale, mask, out,
+        /*key_bits  =*/ 3, /*value_bits=*/ 2,
+        /*seed      =*/ 42 + 7 * (uint64_t) (layer_il < 0 ? 0 : layer_il),
+        session_id, layer_il);
 }
 
 // Forward decl — definition lives further down (helper used by both the
