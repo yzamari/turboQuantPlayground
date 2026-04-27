@@ -166,6 +166,28 @@ The app shows a backend selector (filtered to backends actually compiled into
 the .so), seq-lens text field, bits chips, and a Run button that invokes the
 paired baseline-vs-TurboQuant benchmark and displays the results table.
 
+### Chat (LLM) models
+
+The Assistant tab needs a GGUF on disk. Pick one in Settings → Chat (LLM)
+model; the in-app Download button uses Android's `DownloadManager`. Or push
+manually via adb:
+
+```bash
+# Llama-3.2-1B-Instruct (Q4_K_M, ≈807 MB) — fast, trivial reasoning
+DEST="$(adb shell run-as com.yzamari.turboquant sh -c 'echo $EXTERNAL_STORAGE/Android/data/com.yzamari.turboquant/files')"
+curl -L -o /tmp/llama-3.2-1b.gguf \
+  "https://huggingface.co/bartowski/Llama-3.2-1B-Instruct-GGUF/resolve/main/Llama-3.2-1B-Instruct-Q4_K_M.gguf?download=true"
+adb push /tmp/llama-3.2-1b.gguf "$DEST/Llama-3.2-1B-Instruct-Q4_K_M.gguf"
+
+# Qwen2.5-3B-Instruct (Q4_K_M, ≈1.9 GB) — better reasoning, ~3× slower decode
+curl -L -o /tmp/qwen-2.5-3b.gguf \
+  "https://huggingface.co/bartowski/Qwen2.5-3B-Instruct-GGUF/resolve/main/Qwen2.5-3B-Instruct-Q4_K_M.gguf?download=true"
+adb push /tmp/qwen-2.5-3b.gguf "$DEST/Qwen2.5-3B-Instruct-Q4_K_M.gguf"
+```
+
+Settings → Chat (LLM) model → tap whichever entry shows `●` then `Load model`.
+Switching models requires `Unload` first.
+
 ---
 
 ## 6. Linux aarch64 (automotive Linux placeholder)
